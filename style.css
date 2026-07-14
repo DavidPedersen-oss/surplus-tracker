@@ -197,6 +197,7 @@ main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}
   position:fixed;inset:0;background:rgba(34,32,28,.5);
   display:flex;align-items:flex-end;justify-content:center;z-index:100;
 }
+.modal-backdrop[hidden]{display:none;}
 .modal{
   background:var(--paper-raised);width:100%;max-width:520px;
   border-radius:18px 18px 0 0;padding:22px 18px calc(22px + env(safe-area-inset-bottom));

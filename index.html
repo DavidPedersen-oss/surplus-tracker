@@ -27,7 +27,7 @@
 <main id="app">
 
   <!-- INTAKE -->
-  <section class="tab-panel" id="panel-intake" data-panel="intake">
+  <section class="tab-panel is-active" id="panel-intake" data-panel="intake">
     <div class="panel-head">
       <h2>New item</h2>
       <p class="panel-hint">Log a piece as soon as it's tagged.</p>
@@ -60,6 +60,21 @@
       </label>
 
       <label class="field">
+        <span>Qty</span>
+        <input type="number" id="fQty" value="1" min="1" step="1" required>
+      </label>
+
+      <label class="field">
+        <span>Condition</span>
+        <select id="fCondition" required>
+          <option value="New">New</option>
+          <option value="Good" selected>Good</option>
+          <option value="Fair">Fair</option>
+          <option value="Poor">Poor</option>
+        </select>
+      </label>
+
+      <label class="field">
         <span>Notes</span>
         <input type="text" id="fNotes" placeholder="Condition, location, anything worth flagging">
       </label>
@@ -81,22 +96,15 @@
 
       <div class="caption-block">
         <div class="caption-block-head">
-          <span>Stacked caption</span>
-          <button class="copy-btn" data-copy="captionStacked">Copy</button>
+          <span>Caption</span>
+          <button class="copy-btn" data-copy="captionText">Copy</button>
         </div>
-        <pre id="captionStacked" class="caption-text"></pre>
+        <pre id="captionText" class="caption-text"></pre>
       </div>
 
-      <div class="caption-block">
-        <div class="caption-block-head">
-          <span>Single-line caption</span>
-          <button class="copy-btn" data-copy="captionLine">Copy</button>
-        </div>
-        <pre id="captionLine" class="caption-text"></pre>
-      </div>
-
+      <p class="result-note" id="photoSaveStatus"></p>
       <button type="button" id="downloadPhotosBtn" class="btn-secondary">Download renamed photos</button>
-      <p class="result-note">Upload these to the SharePoint listing as usual — this app doesn't touch that page.</p>
+      <p class="result-note">Paste the caption and upload the photos to the SharePoint listing as usual — this app doesn't touch that page.</p>
     </div>
   </section>
 

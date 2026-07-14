@@ -8,10 +8,11 @@ const SETTINGS_KEY = 'surplusTracker.settings';
 const CACHE_KEY    = 'surplusTracker.itemsCache';
 const QUEUE_KEY     = 'surplusTracker.queue';
 
-const SHEET_RANGE   = 'Inventory!A:J';
-const COLUMNS       = ['ItemCode','Category','Description','Dimensions','DateAdded','Status','ReservedBy','ReservedContact','ReservedDate','Notes'];
+const SHEET_RANGE   = 'Inventory!A:L';
+const COLUMNS       = ['ItemCode','Category','Description','Dimensions','DateAdded','Status','ReservedBy','ReservedContact','ReservedDate','Notes','Qty','Condition'];
 const CATEGORY_LABELS = { B:'Bookshelf / Cabinet', T:'Table / Desk', C:'Chair', M:'Miscellaneous' };
-const SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
+const SCOPE = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file';
+const DRIVE_FOLDER_NAME = 'Surplus Tracker Photos';
 
 let settings = loadSettings();
 let items = loadCache();          // array of item objects, newest-appended-last as stored, we sort for display
@@ -147,9 +148,10 @@ async function upsertItemToSheet(item){
   const row = itemToRow(item);
   const existingRow = await findSheetRowByCode(item.itemCode);
   if(existingRow){
-    await sheetsFetch(`/values/${encodeURIComponent(`Inventory!A${existingRow}:J${existingRow}`)}?valueInputOption=USER_ENTERED`, {
+    const lastCol = String.fromCharCode('A'.charCodeAt(0) + COLUMNS.length - 1); // 'L' for 12 columns
+    await sheetsFetch(`/values/${encodeURIComponent(`Inventory!A${existingRow}:${lastCol}${existingRow}`)}?valueInputOption=USER_ENTERED`, {
       method:'PUT',
-      body: JSON.stringify({ range:`Inventory!A${existingRow}:J${existingRow}`, values:[row] })
+      body: JSON.stringify({ range:`Inventory!A${existingRow}:${lastCol}${existingRow}`, values:[row] })
     });
   } else {
     await sheetsFetch(`/values/${encodeURIComponent(SHEET_RANGE)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
@@ -218,15 +220,16 @@ function nextCode(category){
 }
 
 /* ---------------- captions ---------------- */
-function buildStackedCaption(item){
-  const lines = [item.itemCode, CATEGORY_LABELS[item.category] || item.category, item.description];
-  if(item.dimensions) lines.push(item.dimensions);
-  return lines.join('\n');
-}
-function buildLineCaption(item){
-  const parts = [item.itemCode, CATEGORY_LABELS[item.category] || item.category, item.description];
-  if(item.dimensions) parts.push(item.dimensions);
-  return parts.join(' – ');
+function buildCaption(item){
+  const lines = [
+    `Category: ${CATEGORY_LABELS[item.category] || item.category}`,
+    `Description: ${item.description}`
+  ];
+  if(item.dimensions) lines.push(`Dimensions: ${item.dimensions}`);
+  lines.push(`Qty: ${item.qty || 1}`);
+  lines.push(`Condition: ${item.condition || ''}`);
+  lines.push(`Item Code: ${item.itemCode}`);
+  return lines.map(l => `| ${l} |`).join('\n');
 }
 
 /* ---------------- email text ---------------- */
@@ -268,6 +271,70 @@ async function downloadRenamedPhotos(code, files){
   URL.revokeObjectURL(url);
 }
 
+/* ---------------- Google Drive photo upload ---------------- */
+async function driveFetch(path, options={}){
+  const url = `https://www.googleapis.com/drive/v3${path}`;
+  const res = await fetch(url, {
+    ...options,
+    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json', ...(options.headers||{}) }
+  });
+  if(!res.ok){
+    const body = await res.text();
+    throw new Error(`Drive API ${res.status}: ${body.slice(0,200)}`);
+  }
+  return res.json();
+}
+
+async function ensureDriveFolder(){
+  if(settings.driveFolderId) return settings.driveFolderId;
+  const q = encodeURIComponent(`name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const found = await driveFetch(`/files?q=${q}&fields=files(id,name)`);
+  if(found.files && found.files.length){
+    settings.driveFolderId = found.files[0].id;
+  } else {
+    const created = await driveFetch('/files', {
+      method:'POST',
+      body: JSON.stringify({ name: DRIVE_FOLDER_NAME, mimeType:'application/vnd.google-apps.folder' })
+    });
+    settings.driveFolderId = created.id;
+  }
+  saveSettings();
+  return settings.driveFolderId;
+}
+
+async function uploadPhotoToDrive(file, name, folderId){
+  const boundary = 'surplustracker_' + Math.random().toString(36).slice(2);
+  const metadata = { name, parents:[folderId] };
+  const body = new Blob([
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
+    `--${boundary}\r\nContent-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`,
+    file,
+    `\r\n--${boundary}--`
+  ]);
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    method:'POST',
+    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body
+  });
+  if(!res.ok){
+    const body2 = await res.text();
+    throw new Error(`Drive upload ${res.status}: ${body2.slice(0,200)}`);
+  }
+  return res.json();
+}
+
+async function uploadPhotosToDrive(code, files){
+  if(!files.length) return { ok:0, fail:0 };
+  const folderId = await ensureDriveFolder();
+  let ok = 0, fail = 0;
+  for(let i=0;i<files.length;i++){
+    const name = `${code}_${i+1}.${extOf(files[i].name)}`;
+    try{ await uploadPhotoToDrive(files[i], name, folderId); ok++; }
+    catch(e){ console.error('Drive upload failed for', name, e); fail++; }
+  }
+  return { ok, fail };
+}
+
 /* ---------------- rendering ---------------- */
 function tagCardHTML(item){
   const statusClass = 'status-' + item.status.toLowerCase();
@@ -291,6 +358,10 @@ function tagCardHTML(item){
   const meta = item.status === 'Reserved'
     ? `${item.reservedBy || 'Unknown'} · reserved ${formatDate(item.reservedDate)}`
     : `Added ${formatDate(item.dateAdded)}`;
+  const details = [];
+  if(item.qty && item.qty !== '1') details.push(`Qty ${item.qty}`);
+  if(item.condition) details.push(item.condition);
+  const detailsLine = details.length ? `<div class="tag-card-meta">${details.join(' · ')}</div>` : '';
 
   return `
   <div class="tag-card">
@@ -301,6 +372,7 @@ function tagCardHTML(item){
       </div>
       <span class="status-stamp ${statusClass}">${item.status}</span>
     </div>
+    ${detailsLine}
     <div class="tag-card-meta">${meta} ${ageBadge}</div>
     <div class="tag-card-actions">${actions.join('')}</div>
   </div>`;
@@ -399,7 +471,9 @@ document.addEventListener('DOMContentLoaded', () => {
       dateAdded: todayISO(),
       status: 'Available',
       reservedBy: '', reservedContact: '', reservedDate: '',
-      notes: document.getElementById('fNotes').value.trim()
+      notes: document.getElementById('fNotes').value.trim(),
+      qty: document.getElementById('fQty').value.trim() || '1',
+      condition: document.getElementById('fCondition').value
     };
     items.unshift(item);
     saveCache();
@@ -407,19 +481,35 @@ document.addEventListener('DOMContentLoaded', () => {
     renderInventoryList();
     renderReservedList();
 
+    const photosForUpload = pendingPhotos;
+
     currentResultCode = code;
     document.getElementById('resultCode').textContent = code;
-    document.getElementById('captionStacked').textContent = buildStackedCaption(item);
-    document.getElementById('captionLine').textContent = buildLineCaption(item);
+    document.getElementById('captionText').textContent = buildCaption(item);
     document.getElementById('intakeResult').hidden = false;
     document.getElementById('downloadPhotosBtn').dataset.code = code;
-    document.getElementById('downloadPhotosBtn')._photos = pendingPhotos;
+    document.getElementById('downloadPhotosBtn')._photos = photosForUpload;
+
+    const photoStatus = document.getElementById('photoSaveStatus');
+    photoStatus.textContent = '';
 
     e.target.reset();
+    document.getElementById('fQty').value = '1';
     document.getElementById('photoCount').textContent = 'No photos yet';
     pendingPhotos = [];
     updateCodePreview();
-    toast(accessToken ? 'Saved and syncing…' : 'Saved locally — sign in to sync');
+
+    if(accessToken && photosForUpload.length){
+      toast('Saved — uploading photos to Drive…');
+      uploadPhotosToDrive(code, photosForUpload).then(({ok, fail}) => {
+        if(ok) photoStatus.textContent = `${ok} photo${ok===1?'':'s'} saved to Google Drive${fail?`, ${fail} failed`:''}.`;
+        else if(fail) photoStatus.textContent = `Could not save photos to Drive (${fail} failed) — use "Download renamed photos" instead.`;
+        toast(ok ? `${ok} photo${ok===1?'':'s'} saved to Drive${fail?`, ${fail} failed`:''}` : `Drive upload failed for ${fail} photo${fail===1?'':'s'}`);
+      });
+    } else {
+      if(photosForUpload.length) photoStatus.textContent = 'Sign in to auto-save photos to Google Drive, or download them below.';
+      toast(accessToken ? 'Saved and syncing…' : 'Saved locally — sign in to sync');
+    }
   });
 
   // copy buttons (captions)
