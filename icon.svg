@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#22201C"/>
+  <g transform="translate(256,268) rotate(-8)">
+    <rect x="-118" y="-108" width="236" height="216" rx="20" fill="#F7F5F1"/>
+    <line x1="-118" y1="-58" x2="118" y2="-58" stroke="#22201C" stroke-width="4" stroke-dasharray="10 8" opacity="0.35"/>
+    <circle cx="-78" cy="-83" r="17" fill="#22201C" opacity="0.9"/>
+    <circle cx="-78" cy="-83" r="9" fill="#F7F5F1"/>
+    <text x="0" y="30" text-anchor="middle" font-family="'IBM Plex Mono','Courier New',monospace" font-weight="700" font-size="86" fill="#C89B3C">T7</text>
+  </g>
+</svg>

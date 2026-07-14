@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Surplus Tracker</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">▣</span>
+    <div class="brand-text">
+      <h1>Surplus Tracker</h1>
+      <span class="brand-sub">Parking &amp; Operations</span>
+    </div>
+  </div>
+  <button id="authBtn" class="auth-btn">Sign in</button>
+</header>
+
+<main id="app">
+
+  <!-- INTAKE -->
+  <section class="tab-panel" id="panel-intake" data-panel="intake">
+    <div class="panel-head">
+      <h2>New item</h2>
+      <p class="panel-hint">Log a piece as soon as it's tagged.</p>
+    </div>
+
+    <form id="intakeForm" class="card-form">
+      <label class="field">
+        <span>Category</span>
+        <select id="fCategory" required>
+          <option value="B">B — Bookshelf / Cabinet</option>
+          <option value="T">T — Table / Desk</option>
+          <option value="C">C — Chair</option>
+          <option value="M">M — Miscellaneous</option>
+        </select>
+      </label>
+
+      <div class="code-preview">
+        <span class="code-preview-label">Assigned code</span>
+        <span id="codePreview" class="code-preview-value">—</span>
+      </div>
+
+      <label class="field">
+        <span>Description</span>
+        <input type="text" id="fDescription" placeholder="e.g. Oak veneer 4-drawer file cabinet" required>
+      </label>
+
+      <label class="field">
+        <span>Dimensions</span>
+        <input type="text" id="fDimensions" placeholder='e.g. 36"L x 24"W x 30"H'>
+      </label>
+
+      <label class="field">
+        <span>Notes</span>
+        <input type="text" id="fNotes" placeholder="Condition, location, anything worth flagging">
+      </label>
+
+      <label class="field">
+        <span>Photos</span>
+        <input type="file" id="fPhotos" accept="image/*" capture="environment" multiple>
+        <span class="field-hint" id="photoCount">No photos yet</span>
+      </label>
+
+      <button type="submit" class="btn-primary">Save item &amp; generate listing</button>
+    </form>
+
+    <div class="result-card" id="intakeResult" hidden>
+      <div class="result-head">
+        <span class="tag-chip" id="resultCode"></span>
+        <span class="status-stamp status-available">Available</span>
+      </div>
+
+      <div class="caption-block">
+        <div class="caption-block-head">
+          <span>Stacked caption</span>
+          <button class="copy-btn" data-copy="captionStacked">Copy</button>
+        </div>
+        <pre id="captionStacked" class="caption-text"></pre>
+      </div>
+
+      <div class="caption-block">
+        <div class="caption-block-head">
+          <span>Single-line caption</span>
+          <button class="copy-btn" data-copy="captionLine">Copy</button>
+        </div>
+        <pre id="captionLine" class="caption-text"></pre>
+      </div>
+
+      <button type="button" id="downloadPhotosBtn" class="btn-secondary">Download renamed photos</button>
+      <p class="result-note">Upload these to the SharePoint listing as usual — this app doesn't touch that page.</p>
+    </div>
+  </section>
+
+  <!-- INVENTORY -->
+  <section class="tab-panel" id="panel-inventory" data-panel="inventory">
+    <div class="panel-head">
+      <h2>Inventory</h2>
+      <p class="panel-hint">Everything you've logged, newest first.</p>
+    </div>
+
+    <div class="filter-row">
+      <input type="search" id="invSearch" placeholder="Search code or description">
+      <select id="invStatusFilter">
+        <option value="">All statuses</option>
+        <option value="Available">Available</option>
+        <option value="Reserved">Reserved</option>
+        <option value="Claimed">Claimed</option>
+        <option value="Removed">Removed</option>
+      </select>
+    </div>
+
+    <div id="inventoryList" class="tag-list"></div>
+    <button type="button" id="refreshInventory" class="btn-secondary">Sync with sheet</button>
+  </section>
+
+  <!-- RESERVED -->
+  <section class="tab-panel" id="panel-reserved" data-panel="reserved">
+    <div class="panel-head">
+      <h2>Reserved</h2>
+      <p class="panel-hint">Aging clock starts the moment you mark something reserved.</p>
+    </div>
+    <div id="reservedList" class="tag-list"></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="tab-panel" id="panel-settings" data-panel="settings">
+    <div class="panel-head">
+      <h2>Settings</h2>
+      <p class="panel-hint">One-time setup. See README for the full walkthrough.</p>
+    </div>
+
+    <form id="settingsForm" class="card-form">
+      <label class="field">
+        <span>Google OAuth Client ID</span>
+        <input type="text" id="sClientId" placeholder="xxxxxxxx.apps.googleusercontent.com">
+      </label>
+      <label class="field">
+        <span>Google Sheet ID</span>
+        <input type="text" id="sSheetId" placeholder="the long ID from your sheet's URL">
+      </label>
+      <button type="submit" class="btn-primary">Save settings</button>
+    </form>
+    <p class="result-note" id="settingsStatus"></p>
+  </section>
+
+</main>
+
+<!-- RESERVE MODAL -->
+<div class="modal-backdrop" id="reserveModalBackdrop" hidden>
+  <div class="modal">
+    <h3>Mark reserved</h3>
+    <p class="modal-code" id="reserveModalCode"></p>
+    <form id="reserveForm">
+      <label class="field">
+        <span>Reserved by (name)</span>
+        <input type="text" id="rName" required>
+      </label>
+      <label class="field">
+        <span>Contact (email or phone)</span>
+        <input type="text" id="rContact" required>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="reserveModalCancel">Cancel</button>
+        <button type="submit" class="btn-primary">Confirm reservation</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- EMAIL TEXT MODAL -->
+<div class="modal-backdrop" id="emailModalBackdrop" hidden>
+  <div class="modal">
+    <h3>Confirmation email text</h3>
+    <p class="modal-code">Paste this into a new message to the reserver.</p>
+    <pre class="caption-text" id="emailText"></pre>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="emailModalClose">Close</button>
+      <button type="button" class="btn-primary" id="emailModalCopy">Copy text</button>
+    </div>
+  </div>
+</div>
+
+<nav class="bottom-nav">
+  <button class="nav-btn is-active" data-target="intake">
+    <span class="nav-icon">＋</span><span>Intake</span>
+  </button>
+  <button class="nav-btn" data-target="inventory">
+    <span class="nav-icon">▤</span><span>Inventory</span>
+  </button>
+  <button class="nav-btn" data-target="reserved">
+    <span class="nav-icon">◷</span><span>Reserved</span>
+  </button>
+  <button class="nav-btn" data-target="settings">
+    <span class="nav-icon">⚙</span><span>Settings</span>
+  </button>
+</nav>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
