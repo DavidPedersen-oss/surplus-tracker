@@ -53,6 +53,13 @@ body{
   cursor:pointer;
 }
 .auth-btn.is-signed-in{background:var(--sage);}
+.auth-area{display:flex;align-items:center;gap:8px;}
+.auth-status{
+  font-size:12px;font-weight:600;color:var(--sage);
+  display:flex;align-items:center;gap:5px;white-space:nowrap;
+}
+.auth-status::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--sage);}
+.auth-btn-ghost{background:transparent;color:var(--ink-soft);border:1px solid var(--line);}
 
 /* ---- layout / panels ---- */
 main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}

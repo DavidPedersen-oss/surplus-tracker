@@ -86,9 +86,9 @@ function initGoogleAuth(){
   });
 }
 function setAuthUI(signedIn){
-  const btn = document.getElementById('authBtn');
-  btn.textContent = signedIn ? 'Signed in' : 'Sign in';
-  btn.classList.toggle('is-signed-in', signedIn);
+  document.getElementById('authBtn').hidden = signedIn;
+  document.getElementById('signOutBtn').hidden = !signedIn;
+  document.getElementById('authStatus').hidden = !signedIn;
 }
 function ensureAuth(){
   return new Promise((resolve) => {
@@ -497,17 +497,20 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', () => activateTab(btn.dataset.target));
   });
 
-  // auth button
+  // sign in
   document.getElementById('authBtn').addEventListener('click', async () => {
-    if(accessToken){
-      google.accounts.oauth2.revoke(accessToken, () => {});
-      accessToken = null;
-      setAuthUI(false);
-      toast('Signed out');
-    } else {
-      const ok = await ensureAuth();
-      if(ok){ await flushQueue(); await refreshInventory(); }
-    }
+    const ok = await ensureAuth();
+    if(ok){ await flushQueue(); await refreshInventory(); }
+  });
+
+  // sign out (separate, confirmed — so a stray tap can't sign you out)
+  document.getElementById('signOutBtn').addEventListener('click', () => {
+    if(!accessToken) return;
+    if(!confirm('Sign out of Google? Anything not yet synced stays saved on this device.')) return;
+    google.accounts.oauth2.revoke(accessToken, () => {});
+    accessToken = null;
+    setAuthUI(false);
+    toast('Signed out');
   });
 
   // settings form
