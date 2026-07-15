@@ -12,8 +12,8 @@
    with zero setup screen.
 --------------------------------------------------------------- */
 window.APP_CONFIG = {
-  clientId: 'YOUR_CLIENT_ID.apps.googleusercontent.com',
-  sheetId: 'YOUR_SHEET_ID',
-  driveFolderId: 'YOUR_DRIVE_FOLDER_ID',
-  visionProxyUrl: 'https://REGION-PROJECT.cloudfunctions.net/analyzeImage'
+  clientId: '265547647267-k08fv21h3sdsfe7kuoseoafabsd48h9p.apps.googleusercontent.com',
+  sheetId: '1QVY9-GvqFR3RR4JN49vyXbEMMh4IgXUm8pRjfl7o_Jo',
+  driveFolderId: '1nosC_ZesAhWAoM1W1CA76Yq5DC2T7VjV',
+  visionProxyUrl: ''
 };
