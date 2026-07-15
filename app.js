@@ -8,19 +8,22 @@ const SETTINGS_KEY = 'surplusTracker.settings';
 const CACHE_KEY    = 'surplusTracker.itemsCache';
 const QUEUE_KEY     = 'surplusTracker.queue';
 
-const SHEET_RANGE   = 'Inventory!A:L';
-const COLUMNS       = ['ItemCode','Category','Description','Dimensions','DateAdded','Status','ReservedBy','ReservedContact','ReservedDate','Notes','Qty','Condition'];
+const SHEET_RANGE   = 'Inventory!A:J';
+const COLUMNS       = ['ItemCode','Category','Description','Dimensions','DateAdded','Status','ReservedBy','ReservedContact','ReservedDate','Notes'];
 const CATEGORY_LABELS = { B:'Bookshelf / Cabinet', T:'Table / Desk', C:'Chair', M:'Miscellaneous' };
-const SCOPE = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file';
-const DRIVE_FOLDER_NAME = 'Surplus Tracker Photos';
+const SCOPE = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly';
 
-let settings = loadSettings();
+// Baked-in config (config.js) wins for shared fields, but localStorage can
+// still override locally for testing without editing/redeploying config.js.
+let settings = Object.assign({}, window.APP_CONFIG || {}, loadSettings());
 let items = loadCache();          // array of item objects, newest-appended-last as stored, we sort for display
 let queue = loadQueue();          // { [itemCode]: itemObject }
 let tokenClient = null;
 let accessToken = null;
-let pendingPhotos = [];           // File[] attached in the current intake form
+let pendingPhotos = [];           // File[]/Blob[] attached in the current intake form (camera or Drive)
 let currentResultCode = null;
+let driveResults = [];            // cached list of recent Drive photos
+let driveSelected = new Set();    // ids selected in the Drive picker
 
 /* ---------------- storage helpers ---------------- */
 function loadSettings(){
@@ -148,16 +151,149 @@ async function upsertItemToSheet(item){
   const row = itemToRow(item);
   const existingRow = await findSheetRowByCode(item.itemCode);
   if(existingRow){
-    const lastCol = String.fromCharCode('A'.charCodeAt(0) + COLUMNS.length - 1); // 'L' for 12 columns
-    await sheetsFetch(`/values/${encodeURIComponent(`Inventory!A${existingRow}:${lastCol}${existingRow}`)}?valueInputOption=USER_ENTERED`, {
+    await sheetsFetch(`/values/${encodeURIComponent(`Inventory!A${existingRow}:J${existingRow}`)}?valueInputOption=USER_ENTERED`, {
       method:'PUT',
-      body: JSON.stringify({ range:`Inventory!A${existingRow}:${lastCol}${existingRow}`, values:[row] })
+      body: JSON.stringify({ range:`Inventory!A${existingRow}:J${existingRow}`, values:[row] })
     });
   } else {
     await sheetsFetch(`/values/${encodeURIComponent(SHEET_RANGE)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
       method:'POST',
       body: JSON.stringify({ values:[row] })
     });
+  }
+}
+
+/* ---------------- Google Drive (photo pickup) ---------------- */
+async function driveFetch(path){
+  const res = await fetch(`https://www.googleapis.com/drive/v3${path}`, {
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+  if(!res.ok) throw new Error(`Drive API ${res.status}`);
+  return res.json();
+}
+async function listRecentDrivePhotos(){
+  if(!settings.driveFolderId){ toast('Add a Drive folder ID in config.js'); return []; }
+  const q = encodeURIComponent(`'${settings.driveFolderId}' in parents and mimeType contains 'image/' and trashed = false`);
+  const fields = encodeURIComponent('files(id,name,thumbnailLink,createdTime)');
+  const data = await driveFetch(`/files?q=${q}&orderBy=createdTime desc&pageSize=30&fields=${fields}`);
+  return data.files || [];
+}
+async function downloadDriveFile(id, name){
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+  if(!res.ok) throw new Error(`Drive download ${res.status}`);
+  const blob = await res.blob();
+  return new File([blob], name, { type: blob.type || 'image/jpeg' });
+}
+
+async function openDriveModal(){
+  const ok = await ensureAuth();
+  if(!ok) return;
+  document.getElementById('driveModalBackdrop').hidden = false;
+  document.getElementById('driveGrid').innerHTML = '<div class="empty-state">Loading…</div>';
+  driveSelected = new Set();
+  try{
+    driveResults = await listRecentDrivePhotos();
+    renderDriveGrid();
+  } catch(e){
+    console.error(e);
+    document.getElementById('driveGrid').innerHTML = '<div class="empty-state">Could not load Drive photos. Check the folder ID and that Drive API is enabled.</div>';
+  }
+}
+function renderDriveGrid(){
+  const el = document.getElementById('driveGrid');
+  if(!driveResults.length){ el.innerHTML = '<div class="empty-state">No photos found in that folder.</div>'; return; }
+  el.innerHTML = driveResults.map(f => `
+    <div class="drive-grid-item ${driveSelected.has(f.id)?'is-selected':''}" data-id="${f.id}">
+      <img src="${f.thumbnailLink || ''}" alt="${escapeHTML(f.name)}" loading="lazy">
+    </div>`).join('');
+  el.querySelectorAll('.drive-grid-item').forEach(node => {
+    node.addEventListener('click', () => {
+      const id = node.dataset.id;
+      if(driveSelected.has(id)) driveSelected.delete(id); else driveSelected.add(id);
+      node.classList.toggle('is-selected');
+    });
+  });
+}
+async function addSelectedDrivePhotos(){
+  if(!driveSelected.size){ closeDriveModal(); return; }
+  toast('Adding photos…');
+  const chosen = driveResults.filter(f => driveSelected.has(f.id));
+  for(const f of chosen){
+    try{
+      const file = await downloadDriveFile(f.id, f.name);
+      pendingPhotos.push(file);
+    } catch(e){ console.error('drive download failed', f.name, e); }
+  }
+  renderPhotoThumbs();
+  closeDriveModal();
+  toast(`Added ${chosen.length} photo${chosen.length===1?'':'s'}`);
+}
+function closeDriveModal(){ document.getElementById('driveModalBackdrop').hidden = true; }
+
+function renderPhotoThumbs(){
+  const thumbs = document.getElementById('photoThumbs');
+  thumbs.innerHTML = pendingPhotos.map(f => `<img src="${URL.createObjectURL(f)}" alt="">`).join('');
+  document.getElementById('photoCount').textContent = pendingPhotos.length
+    ? `${pendingPhotos.length} photo${pendingPhotos.length===1?'':'s'} attached`
+    : 'No photos yet';
+}
+
+/* ---------------- AI assist (Gemini via Cloud Function proxy) ---------------- */
+function fileToBase64(file){
+  return new Promise((resolve,reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+async function callVisionProxy(file, mode){
+  if(!settings.visionProxyUrl){ toast('Add your Cloud Function URL in config.js'); return null; }
+  const b64 = await fileToBase64(file);
+  const res = await fetch(settings.visionProxyUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: b64, mimeType: file.type || 'image/jpeg', mode })
+  });
+  if(!res.ok) throw new Error(`Vision proxy ${res.status}`);
+  return res.json();
+}
+async function runCategoryGuess(){
+  if(!pendingPhotos.length){ toast('Attach at least one photo first'); return; }
+  const statusEl = document.getElementById('aiStatus');
+  statusEl.textContent = 'Looking at the photo…';
+  try{
+    const result = await callVisionProxy(pendingPhotos[0], 'category');
+    if(result && result.category && CATEGORY_LABELS[result.category]){
+      document.getElementById('fCategory').value = result.category;
+      updateCodePreview();
+    }
+    if(result && result.description && !document.getElementById('fDescription').value){
+      document.getElementById('fDescription').value = result.description;
+    }
+    statusEl.textContent = 'Filled in — double-check before saving.';
+  } catch(e){
+    console.error(e);
+    statusEl.textContent = 'Could not reach the AI assist — check config.js / Cloud Function.';
+  }
+}
+async function runDimensionRead(){
+  if(!pendingPhotos.length){ toast('Attach a photo of the written dimensions first'); return; }
+  const statusEl = document.getElementById('aiStatus');
+  statusEl.textContent = 'Reading dimensions…';
+  try{
+    const result = await callVisionProxy(pendingPhotos[pendingPhotos.length-1], 'dimensions');
+    if(result && result.dimensions){
+      document.getElementById('fDimensions').value = result.dimensions;
+      statusEl.textContent = 'Filled in — double-check before saving.';
+    } else {
+      statusEl.textContent = "Couldn't make out dimensions in that photo — try a clearer shot.";
+    }
+  } catch(e){
+    console.error(e);
+    statusEl.textContent = 'Could not reach the AI assist — check config.js / Cloud Function.';
   }
 }
 
@@ -220,16 +356,15 @@ function nextCode(category){
 }
 
 /* ---------------- captions ---------------- */
-function buildCaption(item){
-  const lines = [
-    `Category: ${CATEGORY_LABELS[item.category] || item.category}`,
-    `Description: ${item.description}`
-  ];
-  if(item.dimensions) lines.push(`Dimensions: ${item.dimensions}`);
-  lines.push(`Qty: ${item.qty || 1}`);
-  lines.push(`Condition: ${item.condition || ''}`);
-  lines.push(`Item Code: ${item.itemCode}`);
-  return lines.map(l => `| ${l} |`).join('\n');
+function buildStackedCaption(item){
+  const lines = [item.itemCode, CATEGORY_LABELS[item.category] || item.category, item.description];
+  if(item.dimensions) lines.push(item.dimensions);
+  return lines.join('\n');
+}
+function buildLineCaption(item){
+  const parts = [item.itemCode, CATEGORY_LABELS[item.category] || item.category, item.description];
+  if(item.dimensions) parts.push(item.dimensions);
+  return parts.join(' – ');
 }
 
 /* ---------------- email text ---------------- */
@@ -271,70 +406,6 @@ async function downloadRenamedPhotos(code, files){
   URL.revokeObjectURL(url);
 }
 
-/* ---------------- Google Drive photo upload ---------------- */
-async function driveFetch(path, options={}){
-  const url = `https://www.googleapis.com/drive/v3${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json', ...(options.headers||{}) }
-  });
-  if(!res.ok){
-    const body = await res.text();
-    throw new Error(`Drive API ${res.status}: ${body.slice(0,200)}`);
-  }
-  return res.json();
-}
-
-async function ensureDriveFolder(){
-  if(settings.driveFolderId) return settings.driveFolderId;
-  const q = encodeURIComponent(`name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-  const found = await driveFetch(`/files?q=${q}&fields=files(id,name)`);
-  if(found.files && found.files.length){
-    settings.driveFolderId = found.files[0].id;
-  } else {
-    const created = await driveFetch('/files', {
-      method:'POST',
-      body: JSON.stringify({ name: DRIVE_FOLDER_NAME, mimeType:'application/vnd.google-apps.folder' })
-    });
-    settings.driveFolderId = created.id;
-  }
-  saveSettings();
-  return settings.driveFolderId;
-}
-
-async function uploadPhotoToDrive(file, name, folderId){
-  const boundary = 'surplustracker_' + Math.random().toString(36).slice(2);
-  const metadata = { name, parents:[folderId] };
-  const body = new Blob([
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
-    `--${boundary}\r\nContent-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`,
-    file,
-    `\r\n--${boundary}--`
-  ]);
-  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
-    method:'POST',
-    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
-    body
-  });
-  if(!res.ok){
-    const body2 = await res.text();
-    throw new Error(`Drive upload ${res.status}: ${body2.slice(0,200)}`);
-  }
-  return res.json();
-}
-
-async function uploadPhotosToDrive(code, files){
-  if(!files.length) return { ok:0, fail:0 };
-  const folderId = await ensureDriveFolder();
-  let ok = 0, fail = 0;
-  for(let i=0;i<files.length;i++){
-    const name = `${code}_${i+1}.${extOf(files[i].name)}`;
-    try{ await uploadPhotoToDrive(files[i], name, folderId); ok++; }
-    catch(e){ console.error('Drive upload failed for', name, e); fail++; }
-  }
-  return { ok, fail };
-}
-
 /* ---------------- rendering ---------------- */
 function tagCardHTML(item){
   const statusClass = 'status-' + item.status.toLowerCase();
@@ -358,10 +429,6 @@ function tagCardHTML(item){
   const meta = item.status === 'Reserved'
     ? `${item.reservedBy || 'Unknown'} · reserved ${formatDate(item.reservedDate)}`
     : `Added ${formatDate(item.dateAdded)}`;
-  const details = [];
-  if(item.qty && item.qty !== '1') details.push(`Qty ${item.qty}`);
-  if(item.condition) details.push(item.condition);
-  const detailsLine = details.length ? `<div class="tag-card-meta">${details.join(' · ')}</div>` : '';
 
   return `
   <div class="tag-card">
@@ -372,7 +439,6 @@ function tagCardHTML(item){
       </div>
       <span class="status-stamp ${statusClass}">${item.status}</span>
     </div>
-    ${detailsLine}
     <div class="tag-card-meta">${meta} ${ageBadge}</div>
     <div class="tag-card-actions">${actions.join('')}</div>
   </div>`;
@@ -450,13 +516,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // category change -> code preview
   document.getElementById('fCategory').addEventListener('change', updateCodePreview);
 
-  // photo input
+  // photo input (camera / gallery) — adds to whatever's already attached (e.g. from Drive)
   document.getElementById('fPhotos').addEventListener('change', (e) => {
-    pendingPhotos = Array.from(e.target.files || []);
-    document.getElementById('photoCount').textContent = pendingPhotos.length
-      ? `${pendingPhotos.length} photo${pendingPhotos.length===1?'':'s'} attached`
-      : 'No photos yet';
+    pendingPhotos = pendingPhotos.concat(Array.from(e.target.files || []));
+    renderPhotoThumbs();
+    e.target.value = '';
   });
+
+  // Drive picker
+  document.getElementById('loadFromDriveBtn').addEventListener('click', openDriveModal);
+  document.getElementById('driveModalCancel').addEventListener('click', closeDriveModal);
+  document.getElementById('driveModalAdd').addEventListener('click', addSelectedDrivePhotos);
+
+  // AI assist
+  document.getElementById('aiCategoryBtn').addEventListener('click', runCategoryGuess);
+  document.getElementById('aiDimensionsBtn').addEventListener('click', runDimensionRead);
 
   // intake submit
   document.getElementById('intakeForm').addEventListener('submit', (e) => {
@@ -471,9 +545,7 @@ document.addEventListener('DOMContentLoaded', () => {
       dateAdded: todayISO(),
       status: 'Available',
       reservedBy: '', reservedContact: '', reservedDate: '',
-      notes: document.getElementById('fNotes').value.trim(),
-      qty: document.getElementById('fQty').value.trim() || '1',
-      condition: document.getElementById('fCondition').value
+      notes: document.getElementById('fNotes').value.trim()
     };
     items.unshift(item);
     saveCache();
@@ -481,35 +553,21 @@ document.addEventListener('DOMContentLoaded', () => {
     renderInventoryList();
     renderReservedList();
 
-    const photosForUpload = pendingPhotos;
-
     currentResultCode = code;
     document.getElementById('resultCode').textContent = code;
-    document.getElementById('captionText').textContent = buildCaption(item);
+    document.getElementById('captionStacked').textContent = buildStackedCaption(item);
+    document.getElementById('captionLine').textContent = buildLineCaption(item);
     document.getElementById('intakeResult').hidden = false;
     document.getElementById('downloadPhotosBtn').dataset.code = code;
-    document.getElementById('downloadPhotosBtn')._photos = photosForUpload;
-
-    const photoStatus = document.getElementById('photoSaveStatus');
-    photoStatus.textContent = '';
+    document.getElementById('downloadPhotosBtn')._photos = pendingPhotos;
 
     e.target.reset();
-    document.getElementById('fQty').value = '1';
+    document.getElementById('photoThumbs').innerHTML = '';
     document.getElementById('photoCount').textContent = 'No photos yet';
+    document.getElementById('aiStatus').textContent = '';
     pendingPhotos = [];
     updateCodePreview();
-
-    if(accessToken && photosForUpload.length){
-      toast('Saved — uploading photos to Drive…');
-      uploadPhotosToDrive(code, photosForUpload).then(({ok, fail}) => {
-        if(ok) photoStatus.textContent = `${ok} photo${ok===1?'':'s'} saved to Google Drive${fail?`, ${fail} failed`:''}.`;
-        else if(fail) photoStatus.textContent = `Could not save photos to Drive (${fail} failed) — use "Download renamed photos" instead.`;
-        toast(ok ? `${ok} photo${ok===1?'':'s'} saved to Drive${fail?`, ${fail} failed`:''}` : `Drive upload failed for ${fail} photo${fail===1?'':'s'}`);
-      });
-    } else {
-      if(photosForUpload.length) photoStatus.textContent = 'Sign in to auto-save photos to Google Drive, or download them below.';
-      toast(accessToken ? 'Saved and syncing…' : 'Saved locally — sign in to sync');
-    }
+    toast(accessToken ? 'Saved and syncing…' : 'Saved locally — sign in to sync');
   });
 
   // copy buttons (captions)

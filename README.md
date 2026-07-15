@@ -1,16 +1,37 @@
 # Surplus Tracker
 
 A standalone, phone-friendly web app for the furniture surplus workflow: log an item,
-get its code and SharePoint captions instantly, download renamed photos, and track
-reservations with an aging clock — all outside of Claude, hosted on a free static site.
+get its code and SharePoint captions instantly, pull in photos from Google Drive or
+your camera, let AI guess the category and read handwritten dimensions, download
+renamed photos, and track reservations with an aging clock.
 
-It does **not** touch your SharePoint page directly (that requires IT-managed API
-access you don't have). You still copy the caption and drag the renamed photos into
-SharePoint yourself — but everything up to that point is now one tool instead of
-a scattered process.
+It does **not** touch your SharePoint page directly (that needs IT-managed Microsoft
+Graph API access you don't have). You still copy the caption and drag the renamed
+photos into SharePoint yourself — everything up to that point is now one tool instead
+of a scattered process.
 
-Data lives in a Google Sheet you own. The app talks to it directly from your phone's
-browser using your own Google sign-in — no backend server, no exposed passwords or keys.
+Two things make this possible without a traditional backend server:
+- **Data** lives in a Google Sheet you own, synced straight from your phone's browser
+  using your own Google sign-in.
+- **AI photo analysis** (category guessing, reading handwritten dimensions) goes
+  through a small Google Cloud Function that holds your Gemini API key so it's never
+  exposed in the app's code.
+
+Setup now lives in one file (`config.js`) that ships with the deployed site, so once
+you've filled it in, every device just opens the URL and signs in — no per-device
+settings screen.
+
+---
+
+## Why not OneDrive / SharePoint / DeepSeek directly
+
+- Your OneDrive and SharePoint are on CSULB's Microsoft tenant, which requires IT to
+  register an Azure app and grant admin consent — not something available to you
+  right now. So photo pickup uses **Google Drive** instead (your own personal
+  account), which needs no organizational approval at all.
+- DeepSeek's API doesn't currently accept image input (only their consumer chat app
+  does) — Google's Gemini API does, cheaply, and reuses the same Google Cloud project
+  you already set up for Sheets.
 
 ---
 
@@ -18,124 +39,162 @@ browser using your own Google sign-in — no backend server, no exposed password
 
 1. Go to [sheets.google.com](https://sheets.google.com) and create a new sheet.
 2. Rename the first tab to exactly `Inventory`.
-3. In row 1, paste these exact headers, one per column (A through L):
+3. In row 1, paste these exact headers, one per column (A through J):
 
    ```
-   ItemCode	Category	Description	Dimensions	DateAdded	Status	ReservedBy	ReservedContact	ReservedDate	Notes	Qty	Condition
+   ItemCode	Category	Description	Dimensions	DateAdded	Status	ReservedBy	ReservedContact	ReservedDate	Notes
    ```
 
-   (If you already have an existing sheet from before, just add `Qty` in K1 and
-   `Condition` in L1 — existing rows are unaffected.)
-
-4. Copy the Sheet ID out of the URL — it's the long string between `/d/` and `/edit`:
-   `https://docs.google.com/spreadsheets/d/`**`THIS_PART_IS_THE_ID`**`/edit`
-
-Keep this tab handy — you'll paste the ID into the app's Settings screen.
+4. Copy the Sheet ID out of the URL — the long string between `/d/` and `/edit`.
+5. Share the sheet (File → Share) with anyone else who'll use the app, as Editor.
 
 ---
 
-## 2. Create a Google OAuth Client ID (one-time, ~5 minutes)
+## 2. Create a Google Drive intake folder
 
-This lets *you* sign in from the app to read/write *your own* sheet. It does not
-involve CSULB's IT or Azure AD at all — it's tied to your personal Google account.
-
-1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create a new project (any name, e.g. "Surplus Tracker").
-2. In the search bar, find **Google Sheets API** and click **Enable**. Then search for
-   **Google Drive API** and click **Enable** on that too — this is what lets the app
-   save your intake photos straight to a folder in your own Google Drive.
-3. Go to **APIs & Services → OAuth consent screen**. Choose **External**, fill in an
-   app name and your email, and save (you can leave it in "Testing" mode — add your
-   own Google account under **Test users**).
-4. Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
-   - Application type: **Web application**
-   - Under **Authorized JavaScript origins**, add the URL(s) you'll host this on, e.g.:
-     - `http://localhost:8080` (for local testing)
-     - `https://yourname.github.io` (if using GitHub Pages)
-     - `https://your-site-name.netlify.app` (if using Netlify)
-5. Click Create, then copy the **Client ID** (ends in `.apps.googleusercontent.com`).
+1. In [drive.google.com](https://drive.google.com), create a folder — e.g. "Surplus Intake".
+2. Point your phone's camera backup at this folder specifically (not your whole
+   camera roll), so the app only ever shows relevant photos:
+   - **Android**: open the Google Drive app → Settings → Backup → choose this folder
+     for photo backup, or just manually move new shots into it from the Photos/Drive
+     app when you're done shooting — either way, they'll be there by the time you're
+     at your desk.
+   - **iPhone**: the Google Drive app has an "Auto Backup" option in Settings that
+     can target a specific folder the same way, or use Shortcuts to move new camera
+     photos into that Drive folder automatically.
+3. Copy the folder's ID out of its URL (the string after `/folders/`).
 
 ---
 
-## 3. Deploy the app (pick one — all free)
+## 3. Create a Google OAuth Client ID
 
-**Netlify (easiest):**
-1. Go to [app.netlify.com/drop](https://app.netlify.com/drop)
-2. Drag this whole `surplus-tracker` folder onto the page.
-3. You'll get a live URL immediately (e.g. `random-name.netlify.app`). You can rename
-   it in Site settings.
-4. Go back to step 2.4 above and add this URL to your OAuth client's authorized origins.
+Same personal Google Cloud project you'd use for Sheets — this step just adds Drive
+access to it.
 
-**GitHub Pages:**
-1. Create a new GitHub repo, upload the contents of this folder.
-2. Go to Settings → Pages → set source to the main branch, root folder.
-3. Your app will be live at `https://yourusername.github.io/reponame/`.
-4. Add that URL to your OAuth client's authorized origins.
-
-**Cloudflare Pages:**
-1. Go to the Cloudflare dashboard → Workers & Pages → Create → Pages → Upload assets.
-2. Upload this folder's contents.
-3. Add the resulting `*.pages.dev` URL to your OAuth client's authorized origins.
+1. [console.cloud.google.com](https://console.cloud.google.com) → your existing
+   project (or create one).
+2. **APIs & Services → Library** → enable **Google Sheets API** and **Google Drive API**.
+3. **APIs & Services → OAuth consent screen** → under Scopes, add:
+   - `.../auth/spreadsheets`
+   - `.../auth/drive.readonly`
+   Under Test users, add every Google account that'll use the app.
+4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
+   - Type: Web application
+   - Authorized JavaScript origins: your deployed URL, e.g.
+     `https://yourusername.github.io`, plus `http://localhost:8080` for local testing.
+5. Copy the **Client ID**.
 
 ---
 
-## 4. First run
+## 4. Get a Gemini API key
 
-1. Open your deployed URL on your phone.
-2. Tap **Settings**, paste in your Client ID and Sheet ID, tap **Save settings**.
-3. Tap **Sign in** in the top bar and approve access to Google Sheets **and** Google Drive
-   (you'll see both listed on the consent screen — that's expected).
-4. Tap **Sync with sheet** on the Inventory tab once to pull in anything already there.
-
-You're set. Bookmark it or add it to your phone's home screen (Share → Add to Home Screen)
-so it opens like an app.
+1. [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → Create API key
+   → pick the same Cloud project as above. The free tier comfortably covers this
+   volume of use.
+2. Keep this key handy for the next step — it goes in the Cloud Function, never in
+   the app itself.
 
 ---
 
-## How the day-to-day workflow works
+## 5. Deploy the vision proxy (Cloud Function)
 
-**In the field:** measure and photograph as usual.
+This is the one piece that isn't purely static — a small function that holds your
+Gemini key server-side. From the `cloud-function` folder:
 
-**At your desk (or right in the field on your phone):**
-1. Open the app → **Intake** tab.
-2. Pick the category — it shows you the next code automatically.
-3. Fill in description, dimensions, qty, condition, notes, and attach the photos —
-   on a phone, tapping the Photos field opens your camera or photo library directly.
-4. Tap **Save item & generate listing**. This saves the item to your sheet, hands you
-   a ready-to-copy caption, and — if you're signed in — automatically uploads the
-   photos to a **"Surplus Tracker Photos"** folder in your Google Drive, renamed to
-   `CODE_1.jpg`, `CODE_2.jpg`, etc. If you're not signed in (or want a local copy too),
-   use **Download renamed photos** to get the same files as a zip instead.
-5. Paste the caption and grab the photos from Drive (or the zip) to upload into
-   SharePoint exactly like before.
+```bash
+gcloud functions deploy analyzeImage \
+  --gen2 --runtime=nodejs20 --region=us-central1 \
+  --trigger-http --allow-unauthenticated \
+  --entry-point=analyzeImage \
+  --set-env-vars=GEMINI_API_KEY=your-gemini-key,ALLOWED_ORIGIN=https://yourusername.github.io
+```
 
-**When someone reserves an item:**
-1. Go to **Inventory**, find the item, tap **Reserve**.
-2. Enter their name and contact info. This timestamps the reservation and flips the
-   item's status.
-3. A confirmation email is generated for you to copy into a new message — subject
-   line included. Paste, review, send from your own email client.
+No `gcloud` installed? You can paste `index.js` directly into the Cloud Console:
+Cloud Functions → Create Function → same settings as above → Source: Inline editor.
 
-**Watching the clock:** the **Reserved** tab lists every open reservation with a badge
-showing days since reservation — green under 2 weeks, amber 2–4 weeks, red past a month —
-so stale reservations are obvious at a glance.
+After deploying, copy the function's URL (ends in `.cloudfunctions.net/analyzeImage`).
 
-**If you're offline or not signed in:** changes still save on your phone and sync
-automatically next time you're signed in and connected — nothing is lost, but sync
-promptly so the sheet (your source of truth across devices) stays current.
+**Worth knowing:** this endpoint is reachable by anyone who finds the URL (a static
+site can't hide it) — the `ALLOWED_ORIGIN` check stops other websites' browser code
+from calling it, but not someone hitting it directly with curl. Given Gemini's free
+tier and low request volume here, the realistic worst case is small, but you can set
+a budget alert on the Cloud project for peace of mind.
+
+---
+
+## 6. Fill in config.js
+
+Edit `config.js` with the four values you've collected, then commit/redeploy:
+
+```js
+window.APP_CONFIG = {
+  clientId: '...',        // step 3
+  sheetId: '...',         // step 1
+  driveFolderId: '...',   // step 2
+  visionProxyUrl: '...'   // step 5
+};
+```
+
+---
+
+## 7. Deploy the app itself (pick one — all free)
+
+**GitHub Pages** (what you're already using):
+1. Push this folder's contents (except `cloud-function/`) to a repo.
+2. Settings → Pages → source: main branch, root.
+3. Live at `https://yourusername.github.io/reponame/`.
+
+**Netlify**: drag the folder onto [app.netlify.com/drop](https://app.netlify.com/drop).
+
+**Cloudflare Pages**: Workers & Pages → Create → Pages → Upload assets.
+
+Whichever you pick, make sure that exact URL is in both the OAuth origins (step 3)
+and `ALLOWED_ORIGIN` (step 5).
+
+---
+
+## First run
+
+1. Open the deployed URL. No Settings step needed — config.js already has everything.
+2. Tap **Sign in**, approve access.
+3. Tap **Sync with sheet** once to pull in anything already there.
+
+Add it to your phone's home screen (Share → Add to Home Screen) so it opens like an app.
+
+---
+
+## Day-to-day workflow
+
+**In the field:** measure and photograph as usual. If your phone's set up per step 2,
+those photos are already in Drive by the time you sit down.
+
+**At your desk:**
+1. Open the app → **Intake** tab, pick the category (or skip and let AI guess it).
+2. Tap **Load from Drive** to pull in the shots from the field, or use the camera
+   input directly.
+3. Optionally tap **✨ Guess category & description** — AI looks at the first photo
+   and fills in category + a draft description (always double-check it).
+4. If you photographed handwritten dimensions, tap **✨ Read dimensions from photo** —
+   it reads the last attached photo and fills in the Dimensions field.
+5. Fill in/adjust anything, tap **Save item & generate listing**.
+6. Copy the caption, download the renamed photos, upload both to SharePoint as usual.
+
+**Reservations, aging clock, email text:** unchanged from before — see the Inventory
+and Reserved tabs.
 
 ---
 
 ## Notes & limits
 
-- Only you (via your Google sign-in) can write to the sheet — the deployed site itself
-  has no embedded secrets, so it's safe to host somewhere technically public.
-- If you ever want a second device (e.g. a desk computer) to see the same data, just
-  open the same deployed URL there and sign in with the same Google account.
-- SharePoint upload and status changes on the public listing page stay manual by
-  design — automating that would require CSULB IT to register an Azure app, which
-  isn't on the table right now. Nothing here assumes that access.
-- Captions are a starting template — tweak the wording in `app.js`
-  (`buildCaption` / `buildEmailText`) any time to match your exact preferred phrasing.
-- Photos upload to Drive using the `drive.file` scope, which only lets the app see
-  files *it* creates — not your whole Drive. The folder is a normal folder in your
-  "My Drive," so you can open, rename, or move it like any other.
+- Only signed-in, test-user-approved Google accounts (with Editor access to the sheet)
+  can read/write your data — the deployed site has no embedded secrets except the
+  vision proxy's exposure noted in step 5.
+- Multiple people can use this by each doing steps 3–4's sign-in on their own device
+  and being added as a Sheet editor + OAuth test user — see the section on adding
+  another account from earlier setup.
+- SharePoint upload stays manual by design — see "Why not OneDrive / SharePoint /
+  DeepSeek directly" above.
+- AI suggestions are a starting point, not a source of truth — it's still your call
+  on category, description, and dimensions before saving.
+- Caption/email wording is easy to tweak in `app.js` (`buildStackedCaption` /
+  `buildLineCaption` / `buildEmailText`) any time.

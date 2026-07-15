@@ -1,0 +1,12 @@
+{
+  "name": "surplus-tracker-vision-proxy",
+  "version": "1.0.0",
+  "main": "index.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "functions-framework --target=analyzeImage"
+  },
+  "devDependencies": {
+    "@google-cloud/functions-framework": "^3.4.0"
+  }
+}

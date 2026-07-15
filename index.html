@@ -6,8 +6,6 @@
 <title>Surplus Tracker</title>
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon.svg">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -27,7 +25,7 @@
 <main id="app">
 
   <!-- INTAKE -->
-  <section class="tab-panel is-active" id="panel-intake" data-panel="intake">
+  <section class="tab-panel" id="panel-intake" data-panel="intake">
     <div class="panel-head">
       <h2>New item</h2>
       <p class="panel-hint">Log a piece as soon as it's tagged.</p>
@@ -60,30 +58,25 @@
       </label>
 
       <label class="field">
-        <span>Qty</span>
-        <input type="number" id="fQty" value="1" min="1" step="1" required>
-      </label>
-
-      <label class="field">
-        <span>Condition</span>
-        <select id="fCondition" required>
-          <option value="New">New</option>
-          <option value="Good" selected>Good</option>
-          <option value="Fair">Fair</option>
-          <option value="Poor">Poor</option>
-        </select>
-      </label>
-
-      <label class="field">
         <span>Notes</span>
         <input type="text" id="fNotes" placeholder="Condition, location, anything worth flagging">
       </label>
 
       <label class="field">
         <span>Photos</span>
-        <input type="file" id="fPhotos" accept="image/*" capture="environment" multiple>
+        <div class="photo-source-row">
+          <input type="file" id="fPhotos" accept="image/*" capture="environment" multiple>
+          <button type="button" id="loadFromDriveBtn" class="btn-inline">Load from Drive</button>
+        </div>
+        <div id="photoThumbs" class="photo-thumbs"></div>
         <span class="field-hint" id="photoCount">No photos yet</span>
       </label>
+
+      <div class="ai-assist-row">
+        <button type="button" id="aiCategoryBtn" class="btn-inline">✨ Guess category &amp; description</button>
+        <button type="button" id="aiDimensionsBtn" class="btn-inline">✨ Read dimensions from photo</button>
+      </div>
+      <p class="field-hint" id="aiStatus"></p>
 
       <button type="submit" class="btn-primary">Save item &amp; generate listing</button>
     </form>
@@ -96,15 +89,22 @@
 
       <div class="caption-block">
         <div class="caption-block-head">
-          <span>Caption</span>
-          <button class="copy-btn" data-copy="captionText">Copy</button>
+          <span>Stacked caption</span>
+          <button class="copy-btn" data-copy="captionStacked">Copy</button>
         </div>
-        <pre id="captionText" class="caption-text"></pre>
+        <pre id="captionStacked" class="caption-text"></pre>
       </div>
 
-      <p class="result-note" id="photoSaveStatus"></p>
+      <div class="caption-block">
+        <div class="caption-block-head">
+          <span>Single-line caption</span>
+          <button class="copy-btn" data-copy="captionLine">Copy</button>
+        </div>
+        <pre id="captionLine" class="caption-text"></pre>
+      </div>
+
       <button type="button" id="downloadPhotosBtn" class="btn-secondary">Download renamed photos</button>
-      <p class="result-note">Paste the caption and upload the photos to the SharePoint listing as usual — this app doesn't touch that page.</p>
+      <p class="result-note">Upload these to the SharePoint listing as usual — this app doesn't touch that page.</p>
     </div>
   </section>
 
@@ -143,7 +143,7 @@
   <section class="tab-panel" id="panel-settings" data-panel="settings">
     <div class="panel-head">
       <h2>Settings</h2>
-      <p class="panel-hint">One-time setup. See README for the full walkthrough.</p>
+      <p class="panel-hint">Client ID, Sheet ID, Drive folder, and the AI proxy URL are set once in <code>config.js</code> and ship with every deployment — nobody needs this screen for normal use. It's here only if you want to temporarily override a value on this one device for testing.</p>
     </div>
 
     <form id="settingsForm" class="card-form">
@@ -197,6 +197,19 @@
   </div>
 </div>
 
+<!-- DRIVE PICKER MODAL -->
+<div class="modal-backdrop" id="driveModalBackdrop" hidden>
+  <div class="modal">
+    <h3>Recent photos in Drive</h3>
+    <p class="modal-code">From your intake folder, newest first. Tap to select.</p>
+    <div id="driveGrid" class="drive-grid"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="driveModalCancel">Cancel</button>
+      <button type="button" class="btn-primary" id="driveModalAdd">Add selected</button>
+    </div>
+  </div>
+</div>
+
 <nav class="bottom-nav">
   <button class="nav-btn is-active" data-target="intake">
     <span class="nav-icon">＋</span><span>Intake</span>
@@ -216,6 +229,7 @@
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
