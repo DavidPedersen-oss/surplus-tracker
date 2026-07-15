@@ -11,7 +11,8 @@ const QUEUE_KEY     = 'surplusTracker.queue';
 const SHEET_RANGE   = 'Inventory!A:L';
 const COLUMNS       = ['ItemCode','Category','Description','Dimensions','DateAdded','Status','ReservedBy','ReservedContact','ReservedDate','Notes','Qty','Condition'];
 const CATEGORY_LABELS = { B:'Bookshelf / Cabinet', T:'Table / Desk', C:'Chair', M:'Miscellaneous' };
-const SCOPE = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly';
+const SCOPE = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file';
+const DRIVE_FOLDER_NAME = 'Surplus Tracker Photos';
 
 // Baked-in config (config.js) wins for shared fields, but localStorage can
 // still override locally for testing without editing/redeploying config.js.
@@ -164,17 +165,76 @@ async function upsertItemToSheet(item){
   }
 }
 
-/* ---------------- Google Drive (photo pickup) ---------------- */
-async function driveFetch(path){
+/* ---------------- Google Drive ---------------- */
+async function driveFetch(path, options={}){
   const res = await fetch(`https://www.googleapis.com/drive/v3${path}`, {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
+    ...options,
+    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json', ...(options.headers||{}) }
   });
-  if(!res.ok) throw new Error(`Drive API ${res.status}`);
+  if(!res.ok){
+    const body = await res.text();
+    throw new Error(`Drive API ${res.status}: ${body.slice(0,200)}`);
+  }
   return res.json();
 }
+
+// The app manages its own folder under the drive.file scope, so it can only ever
+// see/write files it created — never the rest of your Drive. First upload creates
+// (or re-finds) the "Surplus Tracker Photos" folder in whatever account you sign in with.
+async function ensureDriveFolder(){
+  if(settings.driveFolderId) return settings.driveFolderId;
+  const q = encodeURIComponent(`name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const found = await driveFetch(`/files?q=${q}&fields=files(id,name)`);
+  if(found.files && found.files.length){
+    settings.driveFolderId = found.files[0].id;
+  } else {
+    const created = await driveFetch('/files', {
+      method:'POST',
+      body: JSON.stringify({ name: DRIVE_FOLDER_NAME, mimeType:'application/vnd.google-apps.folder' })
+    });
+    settings.driveFolderId = created.id;
+  }
+  saveSettings();
+  return settings.driveFolderId;
+}
+
+async function uploadPhotoToDrive(file, name, folderId){
+  const boundary = 'surplustracker_' + Math.random().toString(36).slice(2);
+  const metadata = { name, parents:[folderId] };
+  const body = new Blob([
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
+    `--${boundary}\r\nContent-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`,
+    file,
+    `\r\n--${boundary}--`
+  ]);
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    method:'POST',
+    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body
+  });
+  if(!res.ok){
+    const body2 = await res.text();
+    throw new Error(`Drive upload ${res.status}: ${body2.slice(0,200)}`);
+  }
+  return res.json();
+}
+
+async function uploadPhotosToDrive(code, files){
+  if(!files.length) return { ok:0, fail:0 };
+  const folderId = await ensureDriveFolder();
+  let ok = 0, fail = 0;
+  for(let i=0;i<files.length;i++){
+    const name = `${code}_${i+1}.${extOf(files[i].name)}`;
+    try{ await uploadPhotoToDrive(files[i], name, folderId); ok++; }
+    catch(e){ console.error('Drive upload failed for', name, e); fail++; }
+  }
+  return { ok, fail };
+}
+
 async function listRecentDrivePhotos(){
-  if(!settings.driveFolderId){ toast('Add a Drive folder ID in config.js'); return []; }
-  const q = encodeURIComponent(`'${settings.driveFolderId}' in parents and mimeType contains 'image/' and trashed = false`);
+  const folderId = await ensureDriveFolder();
+  if(!folderId){ return []; }
+  const q = encodeURIComponent(`'${folderId}' in parents and mimeType contains 'image/' and trashed = false`);
   const fields = encodeURIComponent('files(id,name,thumbnailLink,createdTime)');
   const data = await driveFetch(`/files?q=${q}&orderBy=createdTime desc&pageSize=30&fields=${fields}`);
   return data.files || [];
@@ -199,7 +259,7 @@ async function openDriveModal(){
     renderDriveGrid();
   } catch(e){
     console.error(e);
-    document.getElementById('driveGrid').innerHTML = '<div class="empty-state">Could not load Drive photos. Check the folder ID and that Drive API is enabled.</div>';
+    document.getElementById('driveGrid').innerHTML = '<div class="empty-state">Could not load Drive photos. Make sure the Drive API is enabled and you approved Drive access at sign-in.</div>';
   }
 }
 function renderDriveGrid(){
@@ -235,7 +295,17 @@ function closeDriveModal(){ document.getElementById('driveModalBackdrop').hidden
 
 function renderPhotoThumbs(){
   const thumbs = document.getElementById('photoThumbs');
-  thumbs.innerHTML = pendingPhotos.map(f => `<img src="${URL.createObjectURL(f)}" alt="">`).join('');
+  thumbs.innerHTML = pendingPhotos.map((f,i) => `
+    <span class="photo-thumb" data-i="${i}">
+      <img src="${URL.createObjectURL(f)}" alt="">
+      <button type="button" class="photo-thumb-remove" data-i="${i}" aria-label="Remove photo">×</button>
+    </span>`).join('');
+  thumbs.querySelectorAll('.photo-thumb-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pendingPhotos.splice(Number(btn.dataset.i), 1);
+      renderPhotoThumbs();
+    });
+  });
   document.getElementById('photoCount').textContent = pendingPhotos.length
     ? `${pendingPhotos.length} photo${pendingPhotos.length===1?'':'s'} attached`
     : 'No photos yet';
@@ -529,12 +599,17 @@ document.addEventListener('DOMContentLoaded', () => {
   // category change -> code preview
   document.getElementById('fCategory').addEventListener('change', updateCodePreview);
 
-  // photo input (camera / gallery) — adds to whatever's already attached (e.g. from Drive)
-  document.getElementById('fPhotos').addEventListener('change', (e) => {
+  // photo inputs — each append to whatever's already attached, so you can take
+  // several shots in a row (and mix in library/Drive photos) before saving.
+  function addPickedPhotos(e){
     pendingPhotos = pendingPhotos.concat(Array.from(e.target.files || []));
     renderPhotoThumbs();
     e.target.value = '';
-  });
+  }
+  document.getElementById('fCamera').addEventListener('change', addPickedPhotos);
+  document.getElementById('fPhotos').addEventListener('change', addPickedPhotos);
+  document.getElementById('takePhotoBtn').addEventListener('click', () => document.getElementById('fCamera').click());
+  document.getElementById('choosePhotoBtn').addEventListener('click', () => document.getElementById('fPhotos').click());
 
   // Drive picker
   document.getElementById('loadFromDriveBtn').addEventListener('click', openDriveModal);
@@ -568,13 +643,18 @@ document.addEventListener('DOMContentLoaded', () => {
     renderInventoryList();
     renderReservedList();
 
+    const photosForUpload = pendingPhotos;
+
     currentResultCode = code;
     document.getElementById('resultCode').textContent = code;
     document.getElementById('captionStacked').textContent = buildStackedCaption(item);
     document.getElementById('captionLine').textContent = buildLineCaption(item);
     document.getElementById('intakeResult').hidden = false;
     document.getElementById('downloadPhotosBtn').dataset.code = code;
-    document.getElementById('downloadPhotosBtn')._photos = pendingPhotos;
+    document.getElementById('downloadPhotosBtn')._photos = photosForUpload;
+
+    const photoStatus = document.getElementById('photoSaveStatus');
+    photoStatus.textContent = '';
 
     e.target.reset();
     document.getElementById('fQty').value = '1';
@@ -583,7 +663,18 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('aiStatus').textContent = '';
     pendingPhotos = [];
     updateCodePreview();
-    toast(accessToken ? 'Saved and syncing…' : 'Saved locally — sign in to sync');
+
+    if(accessToken && photosForUpload.length){
+      toast('Saved — uploading photos to Drive…');
+      uploadPhotosToDrive(code, photosForUpload).then(({ok, fail}) => {
+        if(ok) photoStatus.textContent = `${ok} photo${ok===1?'':'s'} saved to Google Drive${fail?`, ${fail} failed`:''}.`;
+        else if(fail) photoStatus.textContent = `Could not save photos to Drive (${fail} failed) — use "Download renamed photos" instead.`;
+        toast(ok ? `${ok} photo${ok===1?'':'s'} saved to Drive${fail?`, ${fail} failed`:''}` : `Drive upload failed for ${fail} photo${fail===1?'':'s'}`);
+      });
+    } else {
+      if(photosForUpload.length) photoStatus.textContent = 'Sign in to auto-save photos to Google Drive, or download them below.';
+      toast(accessToken ? 'Saved and syncing…' : 'Saved locally — sign in to sync');
+    }
   });
 
   // copy buttons (captions)

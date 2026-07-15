@@ -82,15 +82,18 @@
         <input type="text" id="fNotes" placeholder="Condition, location, anything worth flagging">
       </label>
 
-      <label class="field">
+      <div class="field">
         <span>Photos</span>
         <div class="photo-source-row">
-          <input type="file" id="fPhotos" accept="image/*" capture="environment" multiple>
+          <button type="button" id="takePhotoBtn" class="btn-inline">📷 Take photo</button>
+          <button type="button" id="choosePhotoBtn" class="btn-inline">🖼 Choose files</button>
           <button type="button" id="loadFromDriveBtn" class="btn-inline">Load from Drive</button>
         </div>
+        <input type="file" id="fCamera" accept="image/*" capture="environment" hidden>
+        <input type="file" id="fPhotos" accept="image/*" multiple hidden>
         <div id="photoThumbs" class="photo-thumbs"></div>
         <span class="field-hint" id="photoCount">No photos yet</span>
-      </label>
+      </div>
 
       <div class="ai-assist-row">
         <button type="button" id="aiCategoryBtn" class="btn-inline">✨ Guess category &amp; description</button>
@@ -123,8 +126,9 @@
         <pre id="captionLine" class="caption-text"></pre>
       </div>
 
+      <p class="result-note" id="photoSaveStatus"></p>
       <button type="button" id="downloadPhotosBtn" class="btn-secondary">Download renamed photos</button>
-      <p class="result-note">Upload these to the SharePoint listing as usual — this app doesn't touch that page.</p>
+      <p class="result-note">Photos are saved to your Google Drive automatically when signed in. Grab them from there (or the zip) and upload to the SharePoint listing as usual — this app doesn't touch that page.</p>
     </div>
   </section>
 

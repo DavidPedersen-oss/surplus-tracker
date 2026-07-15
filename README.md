@@ -50,19 +50,15 @@ settings screen.
 
 ---
 
-## 2. Create a Google Drive intake folder
+## 2. Photos — nothing to set up
 
-1. In [drive.google.com](https://drive.google.com), create a folder — e.g. "Surplus Intake".
-2. Point your phone's camera backup at this folder specifically (not your whole
-   camera roll), so the app only ever shows relevant photos:
-   - **Android**: open the Google Drive app → Settings → Backup → choose this folder
-     for photo backup, or just manually move new shots into it from the Photos/Drive
-     app when you're done shooting — either way, they'll be there by the time you're
-     at your desk.
-   - **iPhone**: the Google Drive app has an "Auto Backup" option in Settings that
-     can target a specific folder the same way, or use Shortcuts to move new camera
-     photos into that Drive folder automatically.
-3. Copy the folder's ID out of its URL (the string after `/folders/`).
+You don't need to create a Drive folder or configure camera backup. In the app you
+tap **📷 Take photo** to shoot straight from the intake screen (or **🖼 Choose files**
+to pick existing ones), and on save the app uploads them to a **"Surplus Tracker
+Photos"** folder it creates in your own Drive, renamed `CODE_1.jpg`, `CODE_2.jpg`, etc.
+
+Because it uses the `drive.file` scope, the app can only ever see or touch the files
+*it* creates — never the rest of your Drive.
 
 ---
 
@@ -76,7 +72,7 @@ access to it.
 2. **APIs & Services → Library** → enable **Google Sheets API** and **Google Drive API**.
 3. **APIs & Services → OAuth consent screen** → under Scopes, add:
    - `.../auth/spreadsheets`
-   - `.../auth/drive.readonly`
+   - `.../auth/drive.file`  (non-sensitive — no Google verification needed)
    Under Test users, add every Google account that'll use the app.
 4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
    - Type: Web application
@@ -165,19 +161,18 @@ Add it to your phone's home screen (Share → Add to Home Screen) so it opens li
 
 ## Day-to-day workflow
 
-**In the field:** measure and photograph as usual. If your phone's set up per step 2,
-those photos are already in Drive by the time you sit down.
-
-**At your desk:**
+**One-stop intake — right on your phone, in the field or at your desk:**
 1. Open the app → **Intake** tab, pick the category (or skip and let AI guess it).
-2. Tap **Load from Drive** to pull in the shots from the field, or use the camera
-   input directly.
+2. Tap **📷 Take photo** to shoot the item on the spot — tap it again for more angles.
+   (Or **🖼 Choose files** for existing photos, or **Load from Drive** to re-pull ones
+   you've already saved.) Tap the × on a thumbnail to drop a bad shot.
 3. Optionally tap **✨ Guess category & description** — AI looks at the first photo
    and fills in category + a draft description (always double-check it).
 4. If you photographed handwritten dimensions, tap **✨ Read dimensions from photo** —
    it reads the last attached photo and fills in the Dimensions field.
-5. Fill in/adjust anything, tap **Save item & generate listing**.
-6. Copy the caption, download the renamed photos, upload both to SharePoint as usual.
+5. Fill in/adjust anything, tap **Save item & generate listing**. When signed in, the
+   photos upload straight to your Drive folder, renamed `CODE_1.jpg`, `CODE_2.jpg`, …
+6. Copy the caption, grab the photos from Drive (or the zip), upload both to SharePoint.
 
 **Reservations, aging clock, email text:** unchanged from before — see the Inventory
 and Reserved tabs.

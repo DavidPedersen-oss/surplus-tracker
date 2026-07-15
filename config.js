@@ -14,6 +14,6 @@
 window.APP_CONFIG = {
   clientId: '265547647267-k08fv21h3sdsfe7kuoseoafabsd48h9p.apps.googleusercontent.com',
   sheetId: '1QVY9-GvqFR3RR4JN49vyXbEMMh4IgXUm8pRjfl7o_Jo',
-  driveFolderId: '1nosC_ZesAhWAoM1W1CA76Yq5DC2T7VjV',
+  driveFolderId: '', // leave blank — the app creates/manages its own "Surplus Tracker Photos" folder in your Drive
   visionProxyUrl: ''
 };
