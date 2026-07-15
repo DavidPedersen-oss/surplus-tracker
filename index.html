@@ -58,6 +58,21 @@
       </label>
 
       <label class="field">
+        <span>Qty</span>
+        <input type="number" id="fQty" value="1" min="1" step="1" required>
+      </label>
+
+      <label class="field">
+        <span>Condition</span>
+        <select id="fCondition" required>
+          <option value="New">New</option>
+          <option value="Good" selected>Good</option>
+          <option value="Fair">Fair</option>
+          <option value="Poor">Poor</option>
+        </select>
+      </label>
+
+      <label class="field">
         <span>Notes</span>
         <input type="text" id="fNotes" placeholder="Condition, location, anything worth flagging">
       </label>

@@ -39,10 +39,10 @@ settings screen.
 
 1. Go to [sheets.google.com](https://sheets.google.com) and create a new sheet.
 2. Rename the first tab to exactly `Inventory`.
-3. In row 1, paste these exact headers, one per column (A through J):
+3. In row 1, paste these exact headers, one per column (A through L):
 
    ```
-   ItemCode	Category	Description	Dimensions	DateAdded	Status	ReservedBy	ReservedContact	ReservedDate	Notes
+   ItemCode	Category	Description	Dimensions	DateAdded	Status	ReservedBy	ReservedContact	ReservedDate	Notes	Qty	Condition
    ```
 
 4. Copy the Sheet ID out of the URL — the long string between `/d/` and `/edit`.

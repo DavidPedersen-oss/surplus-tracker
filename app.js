@@ -8,8 +8,8 @@ const SETTINGS_KEY = 'surplusTracker.settings';
 const CACHE_KEY    = 'surplusTracker.itemsCache';
 const QUEUE_KEY     = 'surplusTracker.queue';
 
-const SHEET_RANGE   = 'Inventory!A:J';
-const COLUMNS       = ['ItemCode','Category','Description','Dimensions','DateAdded','Status','ReservedBy','ReservedContact','ReservedDate','Notes'];
+const SHEET_RANGE   = 'Inventory!A:L';
+const COLUMNS       = ['ItemCode','Category','Description','Dimensions','DateAdded','Status','ReservedBy','ReservedContact','ReservedDate','Notes','Qty','Condition'];
 const CATEGORY_LABELS = { B:'Bookshelf / Cabinet', T:'Table / Desk', C:'Chair', M:'Miscellaneous' };
 const SCOPE = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly';
 
@@ -151,9 +151,10 @@ async function upsertItemToSheet(item){
   const row = itemToRow(item);
   const existingRow = await findSheetRowByCode(item.itemCode);
   if(existingRow){
-    await sheetsFetch(`/values/${encodeURIComponent(`Inventory!A${existingRow}:J${existingRow}`)}?valueInputOption=USER_ENTERED`, {
+    const lastCol = String.fromCharCode('A'.charCodeAt(0) + COLUMNS.length - 1); // 'L' for 12 columns
+    await sheetsFetch(`/values/${encodeURIComponent(`Inventory!A${existingRow}:${lastCol}${existingRow}`)}?valueInputOption=USER_ENTERED`, {
       method:'PUT',
-      body: JSON.stringify({ range:`Inventory!A${existingRow}:J${existingRow}`, values:[row] })
+      body: JSON.stringify({ range:`Inventory!A${existingRow}:${lastCol}${existingRow}`, values:[row] })
     });
   } else {
     await sheetsFetch(`/values/${encodeURIComponent(SHEET_RANGE)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
@@ -359,11 +360,15 @@ function nextCode(category){
 function buildStackedCaption(item){
   const lines = [item.itemCode, CATEGORY_LABELS[item.category] || item.category, item.description];
   if(item.dimensions) lines.push(item.dimensions);
+  lines.push(`Qty: ${item.qty || 1}`);
+  if(item.condition) lines.push(item.condition);
   return lines.join('\n');
 }
 function buildLineCaption(item){
   const parts = [item.itemCode, CATEGORY_LABELS[item.category] || item.category, item.description];
   if(item.dimensions) parts.push(item.dimensions);
+  parts.push(`Qty: ${item.qty || 1}`);
+  if(item.condition) parts.push(item.condition);
   return parts.join(' – ');
 }
 
@@ -429,6 +434,10 @@ function tagCardHTML(item){
   const meta = item.status === 'Reserved'
     ? `${item.reservedBy || 'Unknown'} · reserved ${formatDate(item.reservedDate)}`
     : `Added ${formatDate(item.dateAdded)}`;
+  const details = [];
+  if(item.qty && item.qty !== '1') details.push(`Qty ${item.qty}`);
+  if(item.condition) details.push(item.condition);
+  const detailsLine = details.length ? `<div class="tag-card-meta">${details.join(' · ')}</div>` : '';
 
   return `
   <div class="tag-card">
@@ -439,6 +448,7 @@ function tagCardHTML(item){
       </div>
       <span class="status-stamp ${statusClass}">${item.status}</span>
     </div>
+    ${detailsLine}
     <div class="tag-card-meta">${meta} ${ageBadge}</div>
     <div class="tag-card-actions">${actions.join('')}</div>
   </div>`;
@@ -545,7 +555,9 @@ document.addEventListener('DOMContentLoaded', () => {
       dateAdded: todayISO(),
       status: 'Available',
       reservedBy: '', reservedContact: '', reservedDate: '',
-      notes: document.getElementById('fNotes').value.trim()
+      notes: document.getElementById('fNotes').value.trim(),
+      qty: document.getElementById('fQty').value.trim() || '1',
+      condition: document.getElementById('fCondition').value
     };
     items.unshift(item);
     saveCache();
@@ -562,6 +574,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('downloadPhotosBtn')._photos = pendingPhotos;
 
     e.target.reset();
+    document.getElementById('fQty').value = '1';
     document.getElementById('photoThumbs').innerHTML = '';
     document.getElementById('photoCount').textContent = 'No photos yet';
     document.getElementById('aiStatus').textContent = '';
