@@ -90,6 +90,21 @@ main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}
 .field input:focus,.field select:focus{outline:2px solid var(--gold);outline-offset:1px;}
 .field-hint{font-size:12px;color:var(--ink-soft);font-weight:500;}
 
+.dims-row{display:flex;align-items:center;gap:8px;}
+.dims-input{
+  display:flex;align-items:center;flex:1;min-width:0;
+  border:1px solid var(--line);border-radius:9px;background:var(--paper);
+  padding:0 10px;
+}
+.dims-input input{
+  border:none;background:transparent;padding:10px 2px;font-size:16px;color:var(--ink);
+  width:100%;min-width:0;font-family:var(--font-body);
+}
+.dims-input input:focus{outline:none;}
+.dims-input:focus-within{outline:2px solid var(--gold);outline-offset:1px;}
+.dims-suffix{font-size:13px;color:var(--ink-soft);font-weight:600;white-space:nowrap;}
+.dims-x{color:var(--ink-soft);font-weight:600;font-size:13px;}
+
 .code-preview{
   display:flex;align-items:center;justify-content:space-between;
   background:var(--paper);border:1px dashed var(--line);border-radius:9px;

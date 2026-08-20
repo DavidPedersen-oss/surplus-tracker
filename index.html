@@ -57,10 +57,17 @@
         <input type="text" id="fDescription" placeholder="e.g. Oak veneer 4-drawer file cabinet" required>
       </label>
 
-      <label class="field">
+      <div class="field">
         <span>Dimensions</span>
-        <input type="text" id="fDimensions" placeholder='e.g. 36"L x 24"W x 30"H'>
-      </label>
+        <div class="dims-row">
+          <label class="dims-input"><input type="number" id="fDimL" min="0" step="0.25" inputmode="decimal" placeholder="0"><span class="dims-suffix">"L</span></label>
+          <span class="dims-x">×</span>
+          <label class="dims-input"><input type="number" id="fDimH" min="0" step="0.25" inputmode="decimal" placeholder="0"><span class="dims-suffix">"H</span></label>
+          <span class="dims-x">×</span>
+          <label class="dims-input"><input type="number" id="fDimD" min="0" step="0.25" inputmode="decimal" placeholder="0"><span class="dims-suffix">"D</span></label>
+        </div>
+        <span class="field-hint" id="dimsPreview">No dimensions yet</span>
+      </div>
 
       <label class="field">
         <span>Qty</span>
@@ -93,6 +100,7 @@
         <input type="file" id="fPhotos" accept="image/*" multiple hidden>
         <div id="photoThumbs" class="photo-thumbs"></div>
         <span class="field-hint" id="photoCount">No photos yet</span>
+        <span class="field-hint">Camera reopens automatically after each shot — cancel out of the camera when you're done, or use Choose files to add several from your library at once.</span>
       </div>
 
       <div class="ai-assist-row">
@@ -126,6 +134,14 @@
         <pre id="captionLine" class="caption-text"></pre>
       </div>
 
+      <div class="caption-block">
+        <div class="caption-block-head">
+          <span>SharePoint block</span>
+          <button class="copy-btn" data-copy="captionSharePoint">Copy</button>
+        </div>
+        <pre id="captionSharePoint" class="caption-text"></pre>
+      </div>
+
       <p class="result-note" id="photoSaveStatus"></p>
       <button type="button" id="downloadPhotosBtn" class="btn-secondary">Download renamed photos</button>
       <p class="result-note">Photos are saved to your Google Drive automatically when signed in. Grab them from there (or the zip) and upload to the SharePoint listing as usual — this app doesn't touch that page.</p>
@@ -152,6 +168,8 @@
 
     <div id="inventoryList" class="tag-list"></div>
     <button type="button" id="refreshInventory" class="btn-secondary">Sync with sheet</button>
+    <button type="button" id="exportZipBtn" class="btn-secondary">Export everything to ZIP</button>
+    <p class="field-hint">Bundles every loaded item's photos (from Drive), captions, and a CSV of the full list into one zip — sync first to make sure it's current.</p>
   </section>
 
   <!-- RESERVED -->
@@ -217,6 +235,19 @@
     <div class="modal-actions">
       <button type="button" class="btn-secondary" id="emailModalClose">Close</button>
       <button type="button" class="btn-primary" id="emailModalCopy">Copy text</button>
+    </div>
+  </div>
+</div>
+
+<!-- SHAREPOINT BLOCK MODAL -->
+<div class="modal-backdrop" id="sharePointModalBackdrop" hidden>
+  <div class="modal">
+    <h3>SharePoint listing block</h3>
+    <p class="modal-code">Copy/paste this into the SharePoint page.</p>
+    <pre class="caption-text" id="sharePointModalText"></pre>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="sharePointModalClose">Close</button>
+      <button type="button" class="btn-primary" id="sharePointModalCopy">Copy text</button>
     </div>
   </div>
 </div>

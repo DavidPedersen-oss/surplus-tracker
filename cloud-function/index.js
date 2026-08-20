@@ -24,10 +24,11 @@ Categories: B = Bookshelf or cabinet, T = Table or desk, C = Chair, M = Miscella
 Look at the photo and respond with ONLY minified JSON, no markdown, no commentary:
 {"category":"B|T|C|M","description":"a short 6-12 word plain description of the item"}`,
 
-  dimensions: `This photo shows handwritten or printed measurements for a piece of furniture
-(length/width/height, usually in inches). Read the numbers and units exactly as written.
+  dimensions: `This photo shows handwritten or printed measurements for a piece of furniture,
+usually length, height, and depth in inches (sometimes labeled L/W/H — treat any width
+value as depth). Read the numbers exactly as written.
 Respond with ONLY minified JSON, no markdown, no commentary:
-{"dimensions":"formatted like 36\\"L x 24\\"W x 30\\"H using the numbers you read, or an empty string if you can't read it confidently"}`
+{"length":"42","height":"28","depth":"23.5"} — use an empty string "" for any dimension you can't read confidently.`
 };
 
 exports.analyzeImage = async (req, res) => {

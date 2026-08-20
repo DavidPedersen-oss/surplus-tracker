@@ -231,6 +231,18 @@ async function uploadPhotosToDrive(code, files){
   return { ok, fail };
 }
 
+async function listAllDriveFiles(folderId){
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+  const fields = encodeURIComponent('nextPageToken, files(id,name)');
+  let files = [];
+  let pageToken = '';
+  do{
+    const data = await driveFetch(`/files?q=${q}&fields=${fields}&pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ''}`);
+    files = files.concat(data.files || []);
+    pageToken = data.nextPageToken || '';
+  } while(pageToken);
+  return files;
+}
 async function listRecentDrivePhotos(){
   const folderId = await ensureDriveFolder();
   if(!folderId){ return []; }
@@ -356,8 +368,20 @@ async function runDimensionRead(){
   statusEl.textContent = 'Reading dimensions…';
   try{
     const result = await callVisionProxy(pendingPhotos[pendingPhotos.length-1], 'dimensions');
-    if(result && result.dimensions){
-      document.getElementById('fDimensions').value = result.dimensions;
+    let l, h, d;
+    if(result && (result.length || result.height || result.depth)){
+      l = result.length; h = result.height; d = result.depth;
+    } else if(result && result.dimensions){
+      // Older Cloud Function still deployed and returning a pre-formatted string —
+      // parse it back into the 3 fields as a best effort.
+      const parsed = parseDimensionString(result.dimensions);
+      l = parsed.l; h = parsed.h; d = parsed.d;
+    }
+    if(l || h || d){
+      if(l) document.getElementById('fDimL').value = l;
+      if(h) document.getElementById('fDimH').value = h;
+      if(d) document.getElementById('fDimD').value = d;
+      updateDimsPreview();
       statusEl.textContent = 'Filled in — double-check before saving.';
     } else {
       statusEl.textContent = "Couldn't make out dimensions in that photo — try a clearer shot.";
@@ -426,6 +450,43 @@ function nextCode(category){
   return category + String(next).padStart(3,'0');
 }
 
+/* ---------------- dimensions (3 fields -> one formatted string) ---------------- */
+// Storage/captions still use a single formatted string (e.g. 42"L x 28"H x 23.5"D)
+// so the Sheet's existing Dimensions column and old rows don't need to change.
+function formatDimensions(l,h,d){
+  const parts = [];
+  if(l !== '' && l != null && !isNaN(l)) parts.push(`${trimNum(l)}"L`);
+  if(h !== '' && h != null && !isNaN(h)) parts.push(`${trimNum(h)}"H`);
+  if(d !== '' && d != null && !isNaN(d)) parts.push(`${trimNum(d)}"D`);
+  return parts.join(' x ');
+}
+function trimNum(n){ return String(parseFloat(n)); }
+function currentDimensionsString(){
+  return formatDimensions(
+    document.getElementById('fDimL').value,
+    document.getElementById('fDimH').value,
+    document.getElementById('fDimD').value
+  );
+}
+function updateDimsPreview(){
+  document.getElementById('dimsPreview').textContent = currentDimensionsString() || 'No dimensions yet';
+}
+// Best-effort fallback for parsing a pre-formatted dimensions string (older Cloud
+// Function deployments, or hand-typed values) back into L/H/D numbers.
+function parseDimensionString(str){
+  const out = {};
+  const re = /(\d+(?:\.\d+)?)\s*"?\s*([LWHD])/gi;
+  let m;
+  while((m = re.exec(str || ''))){
+    const letter = m[2].toUpperCase();
+    if(letter === 'L') out.l = m[1];
+    else if(letter === 'H') out.h = m[1];
+    else if(letter === 'D') out.d = m[1];
+    else if(letter === 'W' && !out.h) out.h = m[1]; // legacy "W" reads as H when no H is present
+  }
+  return out;
+}
+
 /* ---------------- captions ---------------- */
 function buildStackedCaption(item){
   const lines = [item.itemCode, CATEGORY_LABELS[item.category] || item.category, item.description];
@@ -440,6 +501,14 @@ function buildLineCaption(item){
   parts.push(`Qty: ${item.qty || 1}`);
   if(item.condition) parts.push(item.condition);
   return parts.join(' – ');
+}
+function buildSharePointBlock(item){
+  return [
+    `| Qty: ${item.qty || 1} |`,
+    `| Condition: ${item.condition || ''} |`,
+    `| Dimensions: ${item.dimensions || ''} |`,
+    `| Item Code: ${item.itemCode} |`
+  ].join('\n');
 }
 
 /* ---------------- email text ---------------- */
@@ -481,6 +550,71 @@ async function downloadRenamedPhotos(code, files){
   URL.revokeObjectURL(url);
 }
 
+/* ---------------- full inventory export (data + photos, all in one zip) ---------------- */
+function sanitizeFolderName(name){
+  return (name || 'item').replace(/[\\/:*?"<>|]/g,'-').trim().slice(0,80) || 'item';
+}
+function itemsToCSV(list){
+  const esc = v => {
+    const s = String(v==null ? '' : v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+  };
+  const rows = [COLUMNS, ...list.map(itemToRow)];
+  return rows.map(r => r.map(esc).join(',')).join('\r\n');
+}
+function buildExportDetails(item){
+  const lines = [buildStackedCaption(item), '', buildSharePointBlock(item)];
+  if(item.notes) lines.push('', `Notes: ${item.notes}`);
+  return lines.join('\n');
+}
+async function exportInventoryZip(){
+  if(!items.length){ toast('Nothing to export yet'); return; }
+  if(typeof JSZip === 'undefined'){ toast('Zip library failed to load — check connection'); return; }
+  const btn = document.getElementById('exportZipBtn');
+  btn.disabled = true;
+  toast('Building export…');
+  try{
+    const zip = new JSZip();
+    zip.file('inventory.csv', itemsToCSV(items));
+
+    let driveFiles = [];
+    if(await ensureAuth()){
+      try{
+        const folderId = await ensureDriveFolder();
+        driveFiles = await listAllDriveFiles(folderId);
+      } catch(e){
+        console.error(e);
+        toast('Could not reach Drive for photos — exporting data only');
+      }
+    }
+
+    let photoCount = 0;
+    for(const item of items){
+      const folder = zip.folder(sanitizeFolderName(`${item.itemCode} - ${item.description || ''}`));
+      folder.file('details.txt', buildExportDetails(item));
+      const matches = driveFiles.filter(f => f.name.startsWith(`${item.itemCode}_`));
+      for(const f of matches){
+        try{
+          const res = await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+          });
+          if(res.ok){ folder.file(f.name, await res.blob()); photoCount++; }
+        } catch(e){ console.error('export photo failed', f.name, e); }
+      }
+    }
+
+    const blob = await zip.generateAsync({type:'blob'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `surplus-inventory-${todayISO()}.zip`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    toast(`Exported ${items.length} item${items.length===1?'':'s'}, ${photoCount} photo${photoCount===1?'':'s'}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* ---------------- rendering ---------------- */
 function tagCardHTML(item){
   const statusClass = 'status-' + item.status.toLowerCase();
@@ -501,6 +635,7 @@ function tagCardHTML(item){
   if(item.status === 'Claimed' || item.status === 'Available'){
     actions.push(`<button data-action="remove" data-code="${item.itemCode}">Mark removed</button>`);
   }
+  actions.push(`<button data-action="sharepoint" data-code="${item.itemCode}">SharePoint text</button>`);
   const meta = item.status === 'Reserved'
     ? `${item.reservedBy || 'Unknown'} · reserved ${formatDate(item.reservedDate)}`
     : `Added ${formatDate(item.dateAdded)}`;
@@ -602,9 +737,18 @@ document.addEventListener('DOMContentLoaded', () => {
   // photo inputs — each append to whatever's already attached, so you can take
   // several shots in a row (and mix in library/Drive photos) before saving.
   function addPickedPhotos(e){
-    pendingPhotos = pendingPhotos.concat(Array.from(e.target.files || []));
-    renderPhotoThumbs();
-    e.target.value = '';
+    const input = e.target;
+    const files = Array.from(input.files || []);
+    if(files.length){
+      pendingPhotos = pendingPhotos.concat(files);
+      renderPhotoThumbs();
+    }
+    input.value = '';
+    // Reopen the camera right away so the next shot doesn't need a fresh tap —
+    // cancelling out of the camera (instead of shooting again) just stops the loop.
+    if(input.id === 'fCamera' && files.length){
+      input.click();
+    }
   }
   document.getElementById('fCamera').addEventListener('change', addPickedPhotos);
   document.getElementById('fPhotos').addEventListener('change', addPickedPhotos);
@@ -629,7 +773,7 @@ document.addEventListener('DOMContentLoaded', () => {
       itemCode: code,
       category,
       description: document.getElementById('fDescription').value.trim(),
-      dimensions: document.getElementById('fDimensions').value.trim(),
+      dimensions: currentDimensionsString(),
       dateAdded: todayISO(),
       status: 'Available',
       reservedBy: '', reservedContact: '', reservedDate: '',
@@ -649,6 +793,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('resultCode').textContent = code;
     document.getElementById('captionStacked').textContent = buildStackedCaption(item);
     document.getElementById('captionLine').textContent = buildLineCaption(item);
+    document.getElementById('captionSharePoint').textContent = buildSharePointBlock(item);
     document.getElementById('intakeResult').hidden = false;
     document.getElementById('downloadPhotosBtn').dataset.code = code;
     document.getElementById('downloadPhotosBtn')._photos = photosForUpload;
@@ -658,6 +803,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     e.target.reset();
     document.getElementById('fQty').value = '1';
+    updateDimsPreview();
     document.getElementById('photoThumbs').innerHTML = '';
     document.getElementById('photoCount').textContent = 'No photos yet';
     document.getElementById('aiStatus').textContent = '';
@@ -711,6 +857,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if(action === 'remove')  setStatus(item, 'Removed');
     if(action === 'release') { item.status='Available'; item.reservedBy=''; item.reservedContact=''; item.reservedDate=''; persistItem(item); }
     if(action === 'email')   openEmailModal(item);
+    if(action === 'sharepoint') openSharePointModal(item);
   });
 
   // reserve modal
@@ -733,6 +880,18 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('emailModalCopy').addEventListener('click', () => {
     copyText(document.getElementById('emailText').textContent);
   });
+
+  // SharePoint block modal
+  document.getElementById('sharePointModalClose').addEventListener('click', closeSharePointModal);
+  document.getElementById('sharePointModalCopy').addEventListener('click', () => {
+    copyText(document.getElementById('sharePointModalText').textContent);
+  });
+
+  // dimensions preview
+  ['fDimL','fDimH','fDimD'].forEach(id => document.getElementById(id).addEventListener('input', updateDimsPreview));
+
+  // export everything to zip
+  document.getElementById('exportZipBtn').addEventListener('click', exportInventoryZip);
 
   // kick off
   window.addEventListener('load', () => {
@@ -771,6 +930,12 @@ function openEmailModal(item){
   document.getElementById('emailModalBackdrop').hidden = false;
 }
 function closeEmailModal(){ document.getElementById('emailModalBackdrop').hidden = true; }
+
+function openSharePointModal(item){
+  document.getElementById('sharePointModalText').textContent = buildSharePointBlock(item);
+  document.getElementById('sharePointModalBackdrop').hidden = false;
+}
+function closeSharePointModal(){ document.getElementById('sharePointModalBackdrop').hidden = true; }
 
 function copyText(text){
   navigator.clipboard.writeText(text).then(

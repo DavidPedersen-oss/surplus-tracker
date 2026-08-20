@@ -163,16 +163,24 @@ Add it to your phone's home screen (Share → Add to Home Screen) so it opens li
 
 **One-stop intake — right on your phone, in the field or at your desk:**
 1. Open the app → **Intake** tab, pick the category (or skip and let AI guess it).
-2. Tap **📷 Take photo** to shoot the item on the spot — tap it again for more angles.
-   (Or **🖼 Choose files** for existing photos, or **Load from Drive** to re-pull ones
-   you've already saved.) Tap the × on a thumbnail to drop a bad shot.
+2. Tap **📷 Take photo** to shoot the item — the camera reopens automatically after
+   each shot, so you can knock out several angles back-to-back; cancel out of the
+   camera instead of shooting again when you're done. (Or **🖼 Choose files** to pick
+   several existing photos at once, or **Load from Drive** to re-pull ones you've
+   already saved.) Tap the × on a thumbnail to drop a bad shot.
 3. Optionally tap **✨ Guess category & description** — AI looks at the first photo
    and fills in category + a draft description (always double-check it).
-4. If you photographed handwritten dimensions, tap **✨ Read dimensions from photo** —
-   it reads the last attached photo and fills in the Dimensions field.
+4. Dimensions are three separate fields (L / H / D, in inches) that combine into the
+   `42"L x 28"H x 23.5"D` format automatically as you type — no manual formatting.
+   If you photographed handwritten dimensions, tap **✨ Read dimensions from photo**
+   to fill all three from the last attached photo.
 5. Fill in/adjust anything, tap **Save item & generate listing**. When signed in, the
    photos upload straight to your Drive folder, renamed `CODE_1.jpg`, `CODE_2.jpg`, …
-6. Copy the caption, grab the photos from Drive (or the zip), upload both to SharePoint.
+6. Copy the caption or the ready-to-paste **SharePoint block** (`| Qty: 1 |` etc. —
+   also available per item from the Inventory tab), grab the photos from Drive, and
+   upload both to SharePoint. Or use **Export everything to ZIP** on the Inventory tab
+   to pull the whole list — every item's photos, captions, and a CSV — into one zip in
+   a single tap, instead of round-tripping through the sheet and Drive per item.
 
 **Reservations, aging clock, email text:** unchanged from before — see the Inventory
 and Reserved tabs.
@@ -191,5 +199,10 @@ and Reserved tabs.
   DeepSeek directly" above.
 - AI suggestions are a starting point, not a source of truth — it's still your call
   on category, description, and dimensions before saving.
-- Caption/email wording is easy to tweak in `app.js` (`buildStackedCaption` /
-  `buildLineCaption` / `buildEmailText`) any time.
+- Caption/email/SharePoint-block wording is easy to tweak in `app.js`
+  (`buildStackedCaption` / `buildLineCaption` / `buildEmailText` / `buildSharePointBlock`)
+  any time.
+- The dimensions AI-read prompt changed to return structured length/height/depth
+  instead of one pre-formatted string — redeploy `cloud-function` (step 5) to pick
+  that up. Until you redeploy, the app still works: it falls back to parsing the old
+  string format into the three fields.
