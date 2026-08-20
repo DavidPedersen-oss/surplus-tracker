@@ -28,6 +28,7 @@ let driveSelected = new Set();    // ids selected in the Drive picker
 let driveThumbs = {};             // itemCode -> {id, url}, for inventory card previews and the lightbox
 let editingCode = null;           // itemCode currently open in the Edit modal
 let editPendingPhotos = [];       // new photos (not yet uploaded) attached in the Edit modal
+let suppressNextCardClick = false; // swallows the synthetic click a long-press leaves behind
 
 /* ---------------- storage helpers ---------------- */
 function loadSettings(){
@@ -973,15 +974,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // delegated actions on tag cards
   document.getElementById('app').addEventListener('click', (e) => {
-    // tapping the photo opens the fullscreen lightbox instead of flipping the card
-    const photoTrigger = e.target.closest('.tag-card-photo-trigger');
-    if(photoTrigger){
-      const item = items.find(i => i.itemCode === photoTrigger.closest('.tag-card').dataset.code);
-      if(!item) return;
-      if(driveThumbs[item.itemCode]) openLightbox(item);
-      else toast('No photo saved for this item yet');
-      return;
-    }
+    if(suppressNextCardClick){ suppressNextCardClick = false; return; }
 
     const btn = e.target.closest('button[data-action]');
     if(btn){
@@ -1000,9 +993,41 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // otherwise, a tap anywhere else on a tag card flips it between photo and details
+    // a tap/click anywhere else on a tag card flips it between photo and details
     const card = e.target.closest('.tag-card');
     if(card) card.classList.toggle('is-flipped');
+  });
+
+  function openLightboxForCard(card){
+    const item = items.find(i => i.itemCode === card.dataset.code);
+    if(!item) return;
+    if(driveThumbs[item.itemCode]) openLightbox(item);
+    else toast('No photo saved for this item yet');
+  }
+
+  // Hovering already flips a card to its back before a click can land, so a
+  // plain click can't reliably hit the photo to open the lightbox — use a
+  // double-click (desktop/mouse) and a press-and-hold (touch) instead.
+  document.getElementById('app').addEventListener('dblclick', (e) => {
+    if(e.target.closest('button[data-action]')) return;
+    const card = e.target.closest('.tag-card');
+    if(card) openLightboxForCard(card);
+  });
+
+  let longPressTimer = null;
+  document.getElementById('app').addEventListener('touchstart', (e) => {
+    const card = e.target.closest('.tag-card');
+    if(!card || e.target.closest('button[data-action]')) return;
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null;
+      suppressNextCardClick = true; // the browser fires a synthetic click after touchend
+      openLightboxForCard(card);
+    }, 550);
+  }, { passive: true });
+  ['touchend','touchmove','touchcancel'].forEach(evt => {
+    document.getElementById('app').addEventListener(evt, () => {
+      if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; }
+    }, { passive: true });
   });
 
   // reserve modal
