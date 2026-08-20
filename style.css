@@ -206,35 +206,52 @@ main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}
 .filter-row input{flex:1;min-width:0;}
 
 /* ---- tag list / cards (signature element) ---- */
-.tag-list{display:flex;flex-direction:column;gap:12px;margin-bottom:16px;}
-.tag-card{
+/* Flip card: front shows a large photo + code, back shows the condensed
+   detail view. Hover (desktop) or a tap anywhere except the photo flips it;
+   tapping the photo itself opens the dimensions breakdown instead. */
+.tag-list{display:flex;flex-direction:column;gap:16px;margin-bottom:16px;}
+.tag-card{perspective:1400px;}
+.tag-card-inner{
   position:relative;
-  background:var(--paper-raised);
-  border:1px solid var(--line);
-  border-radius:10px;
-  padding:16px 14px 14px;
-  border-top:none;
+  transition:transform .5s cubic-bezier(.4,.2,.2,1);
+  transform-style:preserve-3d;
+  width:100%;
 }
-.tag-card::before{
+.tag-card:hover .tag-card-inner,
+.tag-card.is-flipped .tag-card-inner{
+  transform:rotateY(180deg);
+}
+.tag-card-face{
+  backface-visibility:hidden;-webkit-backface-visibility:hidden;
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:10px;
+}
+.tag-card-front{cursor:pointer;overflow:hidden;}
+.tag-card-code-label{
+  font-family:var(--font-mono);font-size:13px;font-weight:600;
+  color:var(--ink-soft);letter-spacing:.03em;padding:11px 12px 7px;
+}
+.tag-card-photo{
+  width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:var(--paper);
+}
+.tag-card-photo-empty{
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-mono);font-weight:700;font-size:52px;color:var(--ink-soft);
+  background:var(--paper);
+}
+.tag-card-back{
+  position:absolute;inset:0;transform:rotateY(180deg);
+  padding:16px 14px 14px;overflow-y:auto;cursor:pointer;
+}
+.tag-card-back::before{
   content:"";position:absolute;top:0;left:0;right:0;height:1px;
   background-image:linear-gradient(to right, var(--ink-soft) 50%, transparent 0%);
   background-size:8px 1px;background-repeat:repeat-x;opacity:.35;
 }
-.tag-card::after{
+.tag-card-back::after{
   content:"";position:absolute;top:-7px;left:20px;
   width:12px;height:12px;border-radius:50%;
   background:var(--paper);border:1.5px solid var(--line);
 }
-.tag-card-top{display:flex;align-items:flex-start;gap:12px;}
-.tag-card-thumb{
-  width:52px;height:52px;border-radius:8px;object-fit:cover;
-  border:1px solid var(--line);background:var(--paper);flex-shrink:0;display:block;
-}
-.tag-card-thumb-empty{
-  display:flex;align-items:center;justify-content:center;
-  font-family:var(--font-mono);font-weight:700;font-size:17px;color:var(--ink-soft);
-}
-.tag-card-main{flex:1;min-width:0;}
 .tag-card-headline{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
 .tag-card-code{font-family:var(--font-mono);font-size:17px;font-weight:600;}
 .tag-card-desc{font-size:13.5px;color:var(--ink);margin:4px 0 0;}
@@ -246,6 +263,15 @@ main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}
   background:var(--paper);color:var(--ink);
 }
 .tag-card-actions button.primary-action{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+
+.dims-breakdown{display:flex;flex-direction:column;gap:8px;}
+.dims-breakdown-row{
+  display:flex;justify-content:space-between;align-items:center;
+  border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:var(--paper);
+}
+.dims-breakdown-label{font-size:13px;font-weight:600;color:var(--ink-soft);}
+.dims-breakdown-value{font-family:var(--font-mono);font-size:15px;font-weight:600;color:var(--ink);}
+.dims-breakdown-full{font-size:12px;color:var(--ink-soft);margin-top:2px;}
 
 .age-badge{
   font-family:var(--font-mono);font-size:11px;font-weight:600;

@@ -671,14 +671,17 @@ function tagCardHTML(item){
   const detailsLine = details.length ? `<div class="tag-card-meta">${details.join(' · ')}</div>` : '';
   const thumbUrl = driveThumbs[item.itemCode];
   const thumbHTML = thumbUrl
-    ? `<img class="tag-card-thumb" src="${thumbUrl}" alt="" loading="lazy">`
-    : `<div class="tag-card-thumb tag-card-thumb-empty">${escapeHTML(item.category || '')}</div>`;
+    ? `<img class="tag-card-photo" src="${thumbUrl}" alt="" loading="lazy">`
+    : `<div class="tag-card-photo tag-card-photo-empty">${escapeHTML(item.category || '')}</div>`;
 
   return `
-  <div class="tag-card">
-    <div class="tag-card-top">
-      ${thumbHTML}
-      <div class="tag-card-main">
+  <div class="tag-card" data-code="${item.itemCode}">
+    <div class="tag-card-inner">
+      <div class="tag-card-front tag-card-face">
+        <div class="tag-card-code-label">${item.itemCode}</div>
+        <div class="tag-card-photo-trigger">${thumbHTML}</div>
+      </div>
+      <div class="tag-card-back tag-card-face">
         <div class="tag-card-headline">
           <div>
             <div class="tag-card-code">${item.itemCode}</div>
@@ -688,9 +691,9 @@ function tagCardHTML(item){
         </div>
         ${detailsLine}
         <div class="tag-card-meta">${meta} ${ageBadge}</div>
+        <div class="tag-card-actions">${actions.join('')}</div>
       </div>
     </div>
-    <div class="tag-card-actions">${actions.join('')}</div>
   </div>`;
 }
 function escapeHTML(s){
@@ -881,19 +884,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // delegated actions on tag cards
   document.getElementById('app').addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-action]');
-    if(!btn) return;
-    const code = btn.dataset.code;
-    const action = btn.dataset.action;
-    const item = items.find(i => i.itemCode === code);
-    if(!item) return;
+    // tapping the photo opens the dimensions breakdown instead of flipping the card
+    const photoTrigger = e.target.closest('.tag-card-photo-trigger');
+    if(photoTrigger){
+      const item = items.find(i => i.itemCode === photoTrigger.closest('.tag-card').dataset.code);
+      if(item) openDimensionsModal(item);
+      return;
+    }
 
-    if(action === 'reserve') openReserveModal(item);
-    if(action === 'claim')   setStatus(item, 'Claimed');
-    if(action === 'remove')  setStatus(item, 'Removed');
-    if(action === 'release') { item.status='Available'; item.reservedBy=''; item.reservedContact=''; item.reservedDate=''; persistItem(item); }
-    if(action === 'email')   openEmailModal(item);
-    if(action === 'sharepoint') openSharePointModal(item);
+    const btn = e.target.closest('button[data-action]');
+    if(btn){
+      const code = btn.dataset.code;
+      const action = btn.dataset.action;
+      const item = items.find(i => i.itemCode === code);
+      if(!item) return;
+
+      if(action === 'reserve') openReserveModal(item);
+      if(action === 'claim')   setStatus(item, 'Claimed');
+      if(action === 'remove')  setStatus(item, 'Removed');
+      if(action === 'release') { item.status='Available'; item.reservedBy=''; item.reservedContact=''; item.reservedDate=''; persistItem(item); }
+      if(action === 'email')   openEmailModal(item);
+      if(action === 'sharepoint') openSharePointModal(item);
+      return;
+    }
+
+    // otherwise, a tap anywhere else on a tag card flips it between photo and details
+    const card = e.target.closest('.tag-card');
+    if(card) card.classList.toggle('is-flipped');
   });
 
   // reserve modal
@@ -922,6 +939,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('sharePointModalCopy').addEventListener('click', () => {
     copyText(document.getElementById('sharePointModalText').textContent);
   });
+
+  // dimensions breakdown modal
+  document.getElementById('dimsModalClose').addEventListener('click', closeDimensionsModal);
 
   // dimensions preview
   ['fDimL','fDimH','fDimD'].forEach(id => document.getElementById(id).addEventListener('input', updateDimsPreview));
@@ -987,6 +1007,24 @@ function openSharePointModal(item){
   document.getElementById('sharePointModalBackdrop').hidden = false;
 }
 function closeSharePointModal(){ document.getElementById('sharePointModalBackdrop').hidden = true; }
+
+function openDimensionsModal(item){
+  document.getElementById('dimsModalCode').textContent = `${item.itemCode} — ${item.description}`;
+  const el = document.getElementById('dimsBreakdown');
+  if(!item.dimensions){
+    el.innerHTML = `<div class="empty-state">No dimensions recorded for this item.</div>`;
+  } else {
+    const parsed = parseDimensionString(item.dimensions);
+    const rows = [['Length', parsed.l], ['Height', parsed.h], ['Depth', parsed.d]];
+    el.innerHTML = rows.map(([label,val]) => `
+      <div class="dims-breakdown-row">
+        <span class="dims-breakdown-label">${label}</span>
+        <span class="dims-breakdown-value">${val ? `${val}"` : '—'}</span>
+      </div>`).join('') + `<div class="dims-breakdown-full">${escapeHTML(item.dimensions)}</div>`;
+  }
+  document.getElementById('dimsModalBackdrop').hidden = false;
+}
+function closeDimensionsModal(){ document.getElementById('dimsModalBackdrop').hidden = true; }
 
 function copyText(text){
   navigator.clipboard.writeText(text).then(
