@@ -247,6 +247,13 @@ async function listAllDriveFiles(folderId){
   return files;
 }
 
+// Drive's thumbnailLink defaults to a small ~220px preview (fine for the old
+// 52px thumb, blurry stretched across a large brick tile) — it supports a
+// size parameter in the URL itself, so ask for a much bigger render instead.
+function upsizeThumbnail(url, size){
+  return url ? url.replace(/=s\d+.*$/, `=s${size}`) : url;
+}
+
 // Picks the lowest-numbered photo (CODE_1, CODE_2, ...) per item code as its
 // inventory-card thumbnail.
 function ingestDriveThumbs(files){
@@ -257,7 +264,7 @@ function ingestDriveThumbs(files){
     const code = m[1], idx = parseInt(m[2],10);
     if(bestIdx[code] === undefined || idx < bestIdx[code]){
       bestIdx[code] = idx;
-      driveThumbs[code] = f.thumbnailLink;
+      driveThumbs[code] = upsizeThumbnail(f.thumbnailLink, 1200);
     }
   });
 }
