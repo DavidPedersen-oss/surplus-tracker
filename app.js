@@ -929,11 +929,26 @@ document.addEventListener('DOMContentLoaded', () => {
   // export everything to zip
   document.getElementById('exportZipBtn').addEventListener('click', exportInventoryZip);
 
+  // sign-in prompt (shown on load if not already signed in — saving/uploading
+  // needs it, and the OAuth popup only opens reliably from a real click)
+  document.getElementById('signInModalDismiss').addEventListener('click', closeSignInModal);
+  document.getElementById('signInModalConfirm').addEventListener('click', async () => {
+    closeSignInModal();
+    const ok = await ensureAuth();
+    if(ok){ await flushQueue(); await refreshInventory(); }
+  });
+
   // kick off
   window.addEventListener('load', () => {
-    setTimeout(initGoogleAuth, 300); // give the GIS script a moment to attach
+    setTimeout(() => { initGoogleAuth(); maybePromptSignIn(); }, 300); // give the GIS script a moment to attach
   });
 });
+
+function maybePromptSignIn(){
+  if(accessToken || !settings.clientId) return;
+  document.getElementById('signInModalBackdrop').hidden = false;
+}
+function closeSignInModal(){ document.getElementById('signInModalBackdrop').hidden = true; }
 
 function updateCodePreview(){
   const category = document.getElementById('fCategory').value;
