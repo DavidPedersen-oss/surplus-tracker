@@ -225,7 +225,17 @@ main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}
   width:12px;height:12px;border-radius:50%;
   background:var(--paper);border:1.5px solid var(--line);
 }
-.tag-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+.tag-card-top{display:flex;align-items:flex-start;gap:12px;}
+.tag-card-thumb{
+  width:52px;height:52px;border-radius:8px;object-fit:cover;
+  border:1px solid var(--line);background:var(--paper);flex-shrink:0;display:block;
+}
+.tag-card-thumb-empty{
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-mono);font-weight:700;font-size:17px;color:var(--ink-soft);
+}
+.tag-card-main{flex:1;min-width:0;}
+.tag-card-headline{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
 .tag-card-code{font-family:var(--font-mono);font-size:17px;font-weight:600;}
 .tag-card-desc{font-size:13.5px;color:var(--ink);margin:4px 0 0;}
 .tag-card-meta{font-size:12px;color:var(--ink-soft);margin-top:6px;}
@@ -290,6 +300,39 @@ main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}
   background:var(--ink);color:var(--paper);font-size:13px;font-weight:500;
   padding:10px 16px;border-radius:100px;z-index:200;
   box-shadow:0 6px 16px rgba(0,0,0,.2);
+}
+
+/* ---- desktop layout ---- */
+@media (min-width:900px){
+  body{display:flex;flex-direction:column;min-height:100vh;padding-bottom:0;}
+  .topbar{order:1;}
+  .bottom-nav{
+    order:2;position:static;left:auto;right:auto;bottom:auto;
+    justify-content:center;gap:6px;padding:0;
+    border-top:none;border-bottom:1px solid var(--line);
+  }
+  .nav-btn{
+    flex:0 0 auto;flex-direction:row;gap:7px;
+    padding:14px 20px;border-radius:0;font-size:13px;
+  }
+  .nav-btn.is-active{background:none;border-bottom:2px solid var(--gold);color:var(--gold-ink);}
+  .nav-icon{font-size:16px;}
+  main{order:3;flex:1;max-width:1100px;padding:32px 32px 48px;}
+
+  .card-form{max-width:640px;}
+
+  #panel-intake.is-active{
+    display:grid;grid-template-columns:minmax(0,640px) minmax(0,420px);
+    gap:28px;align-items:start;
+  }
+  #panel-intake .panel-head{grid-column:1 / -1;}
+  #panel-intake .result-card{margin-top:0;}
+
+  .tag-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;align-items:start;}
+  .filter-row{max-width:640px;}
+
+  .modal-backdrop{align-items:center;}
+  .modal{border-radius:18px;max-height:80vh;}
 }
 
 @media (prefers-reduced-motion:reduce){

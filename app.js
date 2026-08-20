@@ -25,6 +25,7 @@ let pendingPhotos = [];           // File[]/Blob[] attached in the current intak
 let currentResultCode = null;
 let driveResults = [];            // cached list of recent Drive photos
 let driveSelected = new Set();    // ids selected in the Drive picker
+let driveThumbs = {};             // itemCode -> thumbnailLink, for inventory card previews
 
 /* ---------------- storage helpers ---------------- */
 function loadSettings(){
@@ -233,7 +234,7 @@ async function uploadPhotosToDrive(code, files){
 
 async function listAllDriveFiles(folderId){
   const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
-  const fields = encodeURIComponent('nextPageToken, files(id,name)');
+  const fields = encodeURIComponent('nextPageToken, files(id,name,thumbnailLink)');
   let files = [];
   let pageToken = '';
   do{
@@ -242,6 +243,30 @@ async function listAllDriveFiles(folderId){
     pageToken = data.nextPageToken || '';
   } while(pageToken);
   return files;
+}
+
+// Picks the lowest-numbered photo (CODE_1, CODE_2, ...) per item code as its
+// inventory-card thumbnail.
+function ingestDriveThumbs(files){
+  const bestIdx = {};
+  files.forEach(f => {
+    const m = /^([A-Za-z]\d+)_(\d+)\./.exec(f.name);
+    if(!m || !f.thumbnailLink) return;
+    const code = m[1], idx = parseInt(m[2],10);
+    if(bestIdx[code] === undefined || idx < bestIdx[code]){
+      bestIdx[code] = idx;
+      driveThumbs[code] = f.thumbnailLink;
+    }
+  });
+}
+async function refreshDriveThumbs(){
+  if(!accessToken) return;
+  try{
+    const folderId = await ensureDriveFolder();
+    ingestDriveThumbs(await listAllDriveFiles(folderId));
+  } catch(e){
+    console.error('drive thumbnail refresh failed', e);
+  }
 }
 async function listRecentDrivePhotos(){
   const folderId = await ensureDriveFolder();
@@ -431,6 +456,7 @@ async function refreshInventory(){
     queued.forEach(i => map.set(i.itemCode, i));
     items = Array.from(map.values());
     saveCache();
+    await refreshDriveThumbs();
     renderInventoryList();
     renderReservedList();
     toast('Inventory synced');
@@ -643,18 +669,27 @@ function tagCardHTML(item){
   if(item.qty && item.qty !== '1') details.push(`Qty ${item.qty}`);
   if(item.condition) details.push(item.condition);
   const detailsLine = details.length ? `<div class="tag-card-meta">${details.join(' · ')}</div>` : '';
+  const thumbUrl = driveThumbs[item.itemCode];
+  const thumbHTML = thumbUrl
+    ? `<img class="tag-card-thumb" src="${thumbUrl}" alt="" loading="lazy">`
+    : `<div class="tag-card-thumb tag-card-thumb-empty">${escapeHTML(item.category || '')}</div>`;
 
   return `
   <div class="tag-card">
     <div class="tag-card-top">
-      <div>
-        <div class="tag-card-code">${item.itemCode}</div>
-        <div class="tag-card-desc">${escapeHTML(item.description)}</div>
+      ${thumbHTML}
+      <div class="tag-card-main">
+        <div class="tag-card-headline">
+          <div>
+            <div class="tag-card-code">${item.itemCode}</div>
+            <div class="tag-card-desc">${escapeHTML(item.description)}</div>
+          </div>
+          <span class="status-stamp ${statusClass}">${item.status}</span>
+        </div>
+        ${detailsLine}
+        <div class="tag-card-meta">${meta} ${ageBadge}</div>
       </div>
-      <span class="status-stamp ${statusClass}">${item.status}</span>
     </div>
-    ${detailsLine}
-    <div class="tag-card-meta">${meta} ${ageBadge}</div>
     <div class="tag-card-actions">${actions.join('')}</div>
   </div>`;
 }
@@ -816,6 +851,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if(ok) photoStatus.textContent = `${ok} photo${ok===1?'':'s'} saved to Google Drive${fail?`, ${fail} failed`:''}.`;
         else if(fail) photoStatus.textContent = `Could not save photos to Drive (${fail} failed) — use "Download renamed photos" instead.`;
         toast(ok ? `${ok} photo${ok===1?'':'s'} saved to Drive${fail?`, ${fail} failed`:''}` : `Drive upload failed for ${fail} photo${fail===1?'':'s'}`);
+        if(ok) refreshDriveThumbs().then(() => { renderInventoryList(); renderReservedList(); });
       });
     } else {
       if(photosForUpload.length) photoStatus.textContent = 'Sign in to auto-save photos to Google Drive, or download them below.';
