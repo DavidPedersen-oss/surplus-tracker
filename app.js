@@ -25,7 +25,7 @@ let pendingPhotos = [];           // File[]/Blob[] attached in the current intak
 let currentResultCode = null;
 let driveResults = [];            // cached list of recent Drive photos
 let driveSelected = new Set();    // ids selected in the Drive picker
-let driveThumbs = {};             // itemCode -> thumbnailLink, for inventory card previews
+let driveThumbs = {};             // itemCode -> {id, url}, for inventory card previews and the lightbox
 let editingCode = null;           // itemCode currently open in the Edit modal
 let editPendingPhotos = [];       // new photos (not yet uploaded) attached in the Edit modal
 
@@ -264,7 +264,7 @@ function ingestDriveThumbs(files){
     const code = m[1], idx = parseInt(m[2],10);
     if(bestIdx[code] === undefined || idx < bestIdx[code]){
       bestIdx[code] = idx;
-      driveThumbs[code] = upsizeThumbnail(f.thumbnailLink, 1200);
+      driveThumbs[code] = { id: f.id, url: upsizeThumbnail(f.thumbnailLink, 1200) };
     }
   });
 }
@@ -687,14 +687,13 @@ function tagCardHTML(item){
   const meta = item.status === 'Reserved'
     ? `${item.reservedBy || 'Unknown'} · reserved ${formatDate(item.reservedDate)}`
     : `Added ${formatDate(item.dateAdded)}`;
-  const details = [];
-  if(item.qty && item.qty !== '1') details.push(`Qty ${item.qty}`);
-  if(item.condition) details.push(item.condition);
-  const detailsLine = details.length ? `<div class="tag-card-meta">${details.join(' · ')}</div>` : '';
-  const thumbUrl = driveThumbs[item.itemCode];
+  const thumbUrl = driveThumbs[item.itemCode] && driveThumbs[item.itemCode].url;
   const thumbHTML = thumbUrl
     ? `<img class="tag-card-photo" src="${thumbUrl}" alt="" loading="lazy">`
     : `<div class="tag-card-photo tag-card-photo-empty">${escapeHTML(item.category || '')}</div>`;
+  const miniThumbHTML = thumbUrl
+    ? `<img class="tag-card-mini-thumb" src="${thumbUrl}" alt="" loading="lazy">`
+    : `<div class="tag-card-mini-thumb tag-card-mini-thumb-empty">${escapeHTML(item.category || '')}</div>`;
 
   return `
   <div class="tag-card" data-code="${item.itemCode}">
@@ -711,7 +710,10 @@ function tagCardHTML(item){
           </div>
           <span class="status-stamp ${statusClass}">${item.status}</span>
         </div>
-        ${detailsLine}
+        <div class="tag-card-back-body">
+          ${miniThumbHTML}
+          <pre class="tag-card-sp-block">${escapeHTML(buildSharePointBlock(item))}</pre>
+        </div>
         <div class="tag-card-meta">${meta} ${ageBadge}</div>
         <div class="tag-card-actions">${actions.join('')}</div>
       </div>
@@ -971,11 +973,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // delegated actions on tag cards
   document.getElementById('app').addEventListener('click', (e) => {
-    // tapping the photo opens the dimensions breakdown instead of flipping the card
+    // tapping the photo opens the fullscreen lightbox instead of flipping the card
     const photoTrigger = e.target.closest('.tag-card-photo-trigger');
     if(photoTrigger){
       const item = items.find(i => i.itemCode === photoTrigger.closest('.tag-card').dataset.code);
-      if(item) openDimensionsModal(item);
+      if(!item) return;
+      if(driveThumbs[item.itemCode]) openLightbox(item);
+      else toast('No photo saved for this item yet');
       return;
     }
 
@@ -1028,8 +1032,11 @@ document.addEventListener('DOMContentLoaded', () => {
     copyText(document.getElementById('sharePointModalText').textContent);
   });
 
-  // dimensions breakdown modal
-  document.getElementById('dimsModalClose').addEventListener('click', closeDimensionsModal);
+  // photo lightbox
+  document.getElementById('lightboxClose').addEventListener('click', closeLightbox);
+  document.getElementById('lightboxBackdrop').addEventListener('click', (e) => {
+    if(e.target.id === 'lightboxBackdrop') closeLightbox();
+  });
 
   // dimensions preview
   ['fDimL','fDimH','fDimD'].forEach(id => document.getElementById(id).addEventListener('input', updateDimsPreview));
@@ -1151,23 +1158,33 @@ function openSharePointModal(item){
 }
 function closeSharePointModal(){ document.getElementById('sharePointModalBackdrop').hidden = true; }
 
-function openDimensionsModal(item){
-  document.getElementById('dimsModalCode').textContent = `${item.itemCode} — ${item.description}`;
-  const el = document.getElementById('dimsBreakdown');
-  if(!item.dimensions){
-    el.innerHTML = `<div class="empty-state">No dimensions recorded for this item.</div>`;
-  } else {
-    const parsed = parseDimensionString(item.dimensions);
-    const rows = [['Length', parsed.l], ['Height', parsed.h], ['Depth', parsed.d]];
-    el.innerHTML = rows.map(([label,val]) => `
-      <div class="dims-breakdown-row">
-        <span class="dims-breakdown-label">${label}</span>
-        <span class="dims-breakdown-value">${val ? `${val}"` : '—'}</span>
-      </div>`).join('') + `<div class="dims-breakdown-full">${escapeHTML(item.dimensions)}</div>`;
+// Opens with whatever's already cached (fast), then swaps in the actual
+// full-resolution file once it downloads — thumbnailLink is capped well
+// below a real camera photo's resolution even at its largest size param.
+function openLightbox(item){
+  const entry = driveThumbs[item.itemCode];
+  const img = document.getElementById('lightboxImg');
+  img.src = entry ? entry.url : '';
+  document.getElementById('lightboxCaption').textContent = buildLineCaption(item);
+  document.getElementById('lightboxBackdrop').hidden = false;
+
+  if(accessToken && entry && entry.id){
+    fetch(`https://www.googleapis.com/drive/v3/files/${entry.id}?alt=media`, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    })
+      .then(res => res.ok ? res.blob() : null)
+      .then(blob => {
+        if(blob && !document.getElementById('lightboxBackdrop').hidden){
+          img.src = URL.createObjectURL(blob);
+        }
+      })
+      .catch(e => console.error('full-res photo fetch failed', e));
   }
-  document.getElementById('dimsModalBackdrop').hidden = false;
 }
-function closeDimensionsModal(){ document.getElementById('dimsModalBackdrop').hidden = true; }
+function closeLightbox(){
+  document.getElementById('lightboxBackdrop').hidden = true;
+  document.getElementById('lightboxImg').src = '';
+}
 
 function copyText(text){
   navigator.clipboard.writeText(text).then(
