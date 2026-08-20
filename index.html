@@ -206,6 +206,69 @@
 
 </main>
 
+<!-- EDIT ITEM MODAL -->
+<div class="modal-backdrop" id="editModalBackdrop" hidden>
+  <div class="modal">
+    <h3>Edit item</h3>
+    <p class="modal-code" id="editModalCode"></p>
+    <form id="editForm">
+      <label class="field">
+        <span>Description</span>
+        <input type="text" id="eDescription" required>
+      </label>
+
+      <div class="field">
+        <span>Dimensions</span>
+        <div class="dims-row">
+          <label class="dims-input"><input type="number" id="eDimL" min="0" step="0.25" inputmode="decimal" placeholder="0"><span class="dims-suffix">"L</span></label>
+          <span class="dims-x">×</span>
+          <label class="dims-input"><input type="number" id="eDimH" min="0" step="0.25" inputmode="decimal" placeholder="0"><span class="dims-suffix">"H</span></label>
+          <span class="dims-x">×</span>
+          <label class="dims-input"><input type="number" id="eDimD" min="0" step="0.25" inputmode="decimal" placeholder="0"><span class="dims-suffix">"D</span></label>
+        </div>
+        <span class="field-hint" id="eDimsPreview">No dimensions yet</span>
+      </div>
+
+      <label class="field">
+        <span>Qty</span>
+        <input type="number" id="eQty" min="1" step="1" required>
+      </label>
+
+      <label class="field">
+        <span>Condition</span>
+        <select id="eCondition" required>
+          <option value="New">New</option>
+          <option value="Good">Good</option>
+          <option value="Fair">Fair</option>
+          <option value="Poor">Poor</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Notes</span>
+        <input type="text" id="eNotes" placeholder="Condition, location, anything worth flagging">
+      </label>
+
+      <div class="field">
+        <span>Add photos</span>
+        <div class="photo-source-row">
+          <button type="button" id="eTakePhotoBtn" class="btn-inline">📷 Take photo</button>
+          <button type="button" id="eChoosePhotoBtn" class="btn-inline">🖼 Choose files</button>
+        </div>
+        <input type="file" id="eCamera" accept="image/*" capture="environment" hidden>
+        <input type="file" id="ePhotos" accept="image/*" multiple hidden>
+        <div id="ePhotoThumbs" class="photo-thumbs"></div>
+        <span class="field-hint" id="ePhotoStatus"></span>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="editModalCancel">Cancel</button>
+        <button type="submit" class="btn-primary">Save changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- RESERVE MODAL -->
 <div class="modal-backdrop" id="reserveModalBackdrop" hidden>
   <div class="modal">

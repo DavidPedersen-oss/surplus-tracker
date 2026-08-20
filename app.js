@@ -26,6 +26,8 @@ let currentResultCode = null;
 let driveResults = [];            // cached list of recent Drive photos
 let driveSelected = new Set();    // ids selected in the Drive picker
 let driveThumbs = {};             // itemCode -> thumbnailLink, for inventory card previews
+let editingCode = null;           // itemCode currently open in the Edit modal
+let editPendingPhotos = [];       // new photos (not yet uploaded) attached in the Edit modal
 
 /* ---------------- storage helpers ---------------- */
 function loadSettings(){
@@ -258,6 +260,18 @@ function ingestDriveThumbs(files){
       driveThumbs[code] = f.thumbnailLink;
     }
   });
+}
+async function countDrivePhotosForCode(code){
+  if(!accessToken) return null;
+  try{
+    const folderId = await ensureDriveFolder();
+    const q = encodeURIComponent(`'${folderId}' in parents and name contains '${code}_' and trashed = false`);
+    const data = await driveFetch(`/files?q=${q}&fields=files(id)&pageSize=100`);
+    return (data.files || []).length;
+  } catch(e){
+    console.error('photo count failed for', code, e);
+    return null;
+  }
 }
 async function refreshDriveThumbs(){
   if(!accessToken) return;
@@ -662,6 +676,7 @@ function tagCardHTML(item){
     actions.push(`<button data-action="remove" data-code="${item.itemCode}">Mark removed</button>`);
   }
   actions.push(`<button data-action="sharepoint" data-code="${item.itemCode}">SharePoint text</button>`);
+  actions.push(`<button data-action="edit" data-code="${item.itemCode}">Edit</button>`);
   const meta = item.status === 'Reserved'
     ? `${item.reservedBy || 'Unknown'} · reserved ${formatDate(item.reservedDate)}`
     : `Added ${formatDate(item.dateAdded)}`;
@@ -793,6 +808,71 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('takePhotoBtn').addEventListener('click', () => document.getElementById('fCamera').click());
   document.getElementById('choosePhotoBtn').addEventListener('click', () => document.getElementById('fPhotos').click());
 
+  // edit modal photo inputs — same continuous-camera behavior as intake
+  function addEditPickedPhotos(e){
+    const input = e.target;
+    const files = Array.from(input.files || []);
+    if(files.length){
+      editPendingPhotos = editPendingPhotos.concat(files);
+      renderEditPhotoThumbs();
+    }
+    input.value = '';
+    if(input.id === 'eCamera' && files.length){
+      input.click();
+    }
+  }
+  document.getElementById('eCamera').addEventListener('change', addEditPickedPhotos);
+  document.getElementById('ePhotos').addEventListener('change', addEditPickedPhotos);
+  document.getElementById('eTakePhotoBtn').addEventListener('click', () => document.getElementById('eCamera').click());
+  document.getElementById('eChoosePhotoBtn').addEventListener('click', () => document.getElementById('ePhotos').click());
+  ['eDimL','eDimH','eDimD'].forEach(id => document.getElementById(id).addEventListener('input', updateEditDimsPreview));
+
+  document.getElementById('editModalCancel').addEventListener('click', closeEditModal);
+  document.getElementById('editForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const item = items.find(i => i.itemCode === editingCode);
+    if(!item) return;
+
+    item.description = document.getElementById('eDescription').value.trim();
+    item.dimensions = formatDimensions(
+      document.getElementById('eDimL').value,
+      document.getElementById('eDimH').value,
+      document.getElementById('eDimD').value
+    );
+    item.qty = document.getElementById('eQty').value.trim() || '1';
+    item.condition = document.getElementById('eCondition').value;
+    item.notes = document.getElementById('eNotes').value.trim();
+    persistItem(item);
+
+    const code = item.itemCode;
+    const newPhotos = editPendingPhotos;
+    closeEditModal();
+    toast('Item updated');
+
+    if(newPhotos.length){
+      if(!accessToken){
+        toast('Sign in to upload the new photos to Drive');
+      } else {
+        toast('Uploading new photos…');
+        const startIdx = (await countDrivePhotosForCode(code)) || 0;
+        const folderId = await ensureDriveFolder();
+        let ok = 0, fail = 0;
+        for(let i=0;i<newPhotos.length;i++){
+          const name = `${code}_${startIdx+i+1}.${extOf(newPhotos[i].name)}`;
+          try{ await uploadPhotoToDrive(newPhotos[i], name, folderId); ok++; }
+          catch(err){ console.error('edit photo upload failed', name, err); fail++; }
+        }
+        toast(ok ? `${ok} photo${ok===1?'':'s'} added${fail?`, ${fail} failed`:''}` : `Failed to upload ${fail} photo${fail===1?'':'s'}`);
+        if(ok){
+          delete driveThumbs[code];
+          await refreshDriveThumbs();
+          renderInventoryList();
+          renderReservedList();
+        }
+      }
+    }
+  });
+
   // Drive picker
   document.getElementById('loadFromDriveBtn').addEventListener('click', openDriveModal);
   document.getElementById('driveModalCancel').addEventListener('click', closeDriveModal);
@@ -905,6 +985,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if(action === 'release') { item.status='Available'; item.reservedBy=''; item.reservedContact=''; item.reservedDate=''; persistItem(item); }
       if(action === 'email')   openEmailModal(item);
       if(action === 'sharepoint') openSharePointModal(item);
+      if(action === 'edit')    openEditModal(item);
       return;
     }
 
@@ -995,6 +1076,61 @@ function openReserveModal(item){
   document.getElementById('reserveModalBackdrop').hidden = false;
 }
 function closeReserveModal(){ document.getElementById('reserveModalBackdrop').hidden = true; }
+
+function openEditModal(item){
+  editingCode = item.itemCode;
+  editPendingPhotos = [];
+  document.getElementById('editModalCode').textContent = `${item.itemCode} — ${CATEGORY_LABELS[item.category] || item.category}`;
+  document.getElementById('eDescription').value = item.description || '';
+  const parsed = parseDimensionString(item.dimensions);
+  document.getElementById('eDimL').value = parsed.l || '';
+  document.getElementById('eDimH').value = parsed.h || '';
+  document.getElementById('eDimD').value = parsed.d || '';
+  updateEditDimsPreview();
+  document.getElementById('eQty').value = item.qty || '1';
+  document.getElementById('eCondition').value = item.condition || 'Good';
+  document.getElementById('eNotes').value = item.notes || '';
+  renderEditPhotoThumbs();
+
+  const statusEl = document.getElementById('ePhotoStatus');
+  statusEl.textContent = accessToken ? 'Checking existing photos…' : 'Sign in to see or add Drive photos for this item.';
+  document.getElementById('editModalBackdrop').hidden = false;
+  if(accessToken){
+    countDrivePhotosForCode(item.itemCode).then(n => {
+      if(editingCode !== item.itemCode) return; // modal moved on to another item
+      statusEl.textContent = n === null
+        ? 'Could not check Drive — you can still add photos below.'
+        : n > 0 ? `${n} photo${n===1?'':'s'} already saved to Drive — anything added below is appended.`
+                : 'No photos saved yet — add some below.';
+    });
+  }
+}
+function closeEditModal(){
+  document.getElementById('editModalBackdrop').hidden = true;
+  editingCode = null;
+  editPendingPhotos = [];
+}
+function updateEditDimsPreview(){
+  document.getElementById('eDimsPreview').textContent = formatDimensions(
+    document.getElementById('eDimL').value,
+    document.getElementById('eDimH').value,
+    document.getElementById('eDimD').value
+  ) || 'No dimensions yet';
+}
+function renderEditPhotoThumbs(){
+  const thumbs = document.getElementById('ePhotoThumbs');
+  thumbs.innerHTML = editPendingPhotos.map((f,i) => `
+    <span class="photo-thumb" data-i="${i}">
+      <img src="${URL.createObjectURL(f)}" alt="">
+      <button type="button" class="photo-thumb-remove" data-i="${i}" aria-label="Remove photo">×</button>
+    </span>`).join('');
+  thumbs.querySelectorAll('.photo-thumb-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      editPendingPhotos.splice(Number(btn.dataset.i), 1);
+      renderEditPhotoThumbs();
+    });
+  });
+}
 
 function openEmailModal(item){
   document.getElementById('emailText').textContent = buildEmailText(item);
