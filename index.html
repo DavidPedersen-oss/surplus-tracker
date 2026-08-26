@@ -120,6 +120,8 @@
         <span class="status-stamp status-available">Available</span>
       </div>
 
+      <div class="wish-alert" id="intakeWishAlert" hidden></div>
+
       <div class="caption-block">
         <div class="caption-block-head">
           <span>Stacked caption</span>
@@ -172,6 +174,82 @@
     <button type="button" id="refreshInventory" class="btn-secondary">Sync with sheet</button>
     <button type="button" id="exportZipBtn" class="btn-secondary">Export everything to ZIP</button>
     <p class="field-hint">Bundles every loaded item's photos (from Drive), captions, and a CSV of the full list into one zip — sync first to make sure it's current.</p>
+  </section>
+
+  <!-- WISHLIST -->
+  <section class="tab-panel" id="panel-wishlist" data-panel="wishlist">
+    <div class="panel-head">
+      <h2>Wishlist</h2>
+      <p class="panel-hint">What departments have asked us to keep an eye out for. Anything available that looks like a match shows up right on the request, and logging new intake tells you who's been waiting.</p>
+    </div>
+
+    <div class="wish-col">
+      <form id="wishForm" class="card-form">
+        <div class="code-preview">
+          <span class="code-preview-label">Request</span>
+          <span id="wishCodePreview" class="code-preview-value">—</span>
+        </div>
+
+        <label class="field">
+          <span>Department</span>
+          <input type="text" id="wDepartment" placeholder="e.g. Financial Aid" required>
+        </label>
+
+        <label class="field">
+          <span>Requested by</span>
+          <input type="text" id="wRequestedBy" placeholder="Who asked — the name goes on the follow-up">
+        </label>
+
+        <label class="field">
+          <span>Contact</span>
+          <input type="text" id="wContact" placeholder="Email or phone">
+        </label>
+
+        <label class="field">
+          <span>What they're looking for</span>
+          <input type="text" id="wItem" placeholder="e.g. Two 5-shelf bookcases, dark wood" required>
+        </label>
+
+        <label class="field">
+          <span>Category</span>
+          <select id="wCategory">
+            <option value="Any">Any / not sure</option>
+            <option value="B">B — Bookshelf / Cabinet</option>
+            <option value="T">T — Table / Desk</option>
+            <option value="C">C — Chair</option>
+            <option value="M">M — Miscellaneous</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Qty wanted</span>
+          <input type="number" id="wQty" value="1" min="1" step="1">
+        </label>
+
+        <label class="field">
+          <span>Notes</span>
+          <input type="text" id="wNotes" placeholder="Timing, room number, must-haves — anything worth remembering">
+        </label>
+
+        <button type="submit" class="btn-primary">Add to wishlist</button>
+      </form>
+    </div>
+
+    <div class="wish-col">
+      <div class="filter-row">
+        <input type="search" id="wishSearch" placeholder="Search department or item">
+        <select id="wishStatusFilter">
+          <option value="Open">Open</option>
+          <option value="">All statuses</option>
+          <option value="Filled">Filled</option>
+          <option value="Cancelled">Cancelled</option>
+        </select>
+      </div>
+
+      <div id="wishlistList" class="wish-list"></div>
+      <button type="button" id="refreshWishlist" class="btn-secondary">Sync with sheet</button>
+      <p class="field-hint">Requests live in a <code>Wishlist</code> tab of the same Google Sheet — the app creates that tab for you the first time you sync.</p>
+    </div>
   </section>
 
   <!-- RESERVED -->
@@ -304,6 +382,89 @@
   </div>
 </div>
 
+<!-- WISHLIST EDIT MODAL -->
+<div class="modal-backdrop" id="wishEditModalBackdrop" hidden>
+  <div class="modal">
+    <h3>Edit request</h3>
+    <p class="modal-code" id="wishEditModalCode"></p>
+    <form id="wishEditForm">
+      <label class="field">
+        <span>Department</span>
+        <input type="text" id="weDepartment" required>
+      </label>
+      <label class="field">
+        <span>Requested by</span>
+        <input type="text" id="weRequestedBy">
+      </label>
+      <label class="field">
+        <span>Contact</span>
+        <input type="text" id="weContact">
+      </label>
+      <label class="field">
+        <span>What they're looking for</span>
+        <input type="text" id="weItem" required>
+      </label>
+      <label class="field">
+        <span>Category</span>
+        <select id="weCategory">
+          <option value="Any">Any / not sure</option>
+          <option value="B">B — Bookshelf / Cabinet</option>
+          <option value="T">T — Table / Desk</option>
+          <option value="C">C — Chair</option>
+          <option value="M">M — Miscellaneous</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Qty wanted</span>
+        <input type="number" id="weQty" min="1" step="1">
+      </label>
+      <label class="field">
+        <span>Notes</span>
+        <input type="text" id="weNotes">
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="wishEditModalCancel">Cancel</button>
+        <button type="submit" class="btn-primary">Save changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- WISHLIST FILL MODAL -->
+<div class="modal-backdrop" id="wishFillModalBackdrop" hidden>
+  <div class="modal">
+    <h3>Fill this request</h3>
+    <p class="modal-code" id="wishFillModalCode"></p>
+    <div class="field">
+      <span>Item that fills it</span>
+      <div id="wishFillMatches" class="wish-fill-matches"></div>
+      <input type="text" id="wishFillCodeInput" placeholder="Or type an item code, e.g. B004">
+      <span class="field-hint">Leave it blank if it came from somewhere else — the request still gets marked filled.</span>
+    </div>
+    <label class="wish-check">
+      <input type="checkbox" id="wishFillReserve" checked>
+      <span>Also reserve that item for this department</span>
+    </label>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="wishFillModalCancel">Cancel</button>
+      <button type="button" class="btn-primary" id="wishFillModalConfirm">Mark filled</button>
+    </div>
+  </div>
+</div>
+
+<!-- WISHLIST NOTIFY MODAL -->
+<div class="modal-backdrop" id="wishNotifyModalBackdrop" hidden>
+  <div class="modal">
+    <h3>Heads-up email text</h3>
+    <p class="modal-code">Paste this into a new message to the department that asked.</p>
+    <pre class="caption-text" id="wishNotifyText"></pre>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="wishNotifyModalClose">Close</button>
+      <button type="button" class="btn-primary" id="wishNotifyModalCopy">Copy text</button>
+    </div>
+  </div>
+</div>
+
 <!-- SIGN-IN PROMPT MODAL -->
 <div class="modal-backdrop" id="signInModalBackdrop" hidden>
   <div class="modal">
@@ -357,6 +518,9 @@
   </button>
   <button class="nav-btn" data-target="inventory">
     <span class="nav-icon">▤</span><span>Inventory</span>
+  </button>
+  <button class="nav-btn" data-target="wishlist">
+    <span class="nav-icon">★</span><span>Wishlist</span>
   </button>
   <button class="nav-btn" data-target="reserved">
     <span class="nav-icon">◷</span><span>Reserved</span>

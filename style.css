@@ -177,7 +177,9 @@ main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}
 }
 .status-available{color:var(--sage-ink);background:rgba(91,117,97,.1);}
 .status-reserved{color:var(--amber-ink);background:rgba(196,98,45,.1);}
-.status-claimed,.status-removed{color:var(--ink-soft);background:rgba(107,100,89,.08);}
+.status-claimed,.status-removed,.status-cancelled{color:var(--ink-soft);background:rgba(107,100,89,.08);}
+.status-open{color:var(--gold-ink);background:rgba(200,155,60,.14);}
+.status-filled{color:var(--sage-ink);background:rgba(91,117,97,.1);}
 
 .caption-block{margin-bottom:12px;}
 .caption-block-head{
@@ -293,6 +295,76 @@ main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}
   padding:30px 10px;border:1px dashed var(--line);border-radius:var(--radius);
 }
 
+/* ---- wishlist ---- */
+/* Requests are flat cards, not flip cards — there's no photo to hide behind,
+   and the whole point is seeing department, ask, and matches at a glance. */
+.wish-col + .wish-col{margin-top:22px;}
+.wish-list{display:flex;flex-direction:column;gap:14px;margin-bottom:16px;}
+.wish-card{
+  background:var(--paper-raised);border:1px solid var(--line);border-radius:10px;
+  padding:15px 14px 13px;
+}
+.wish-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+.wish-card-headline{min-width:0;}
+.wish-card-dept{
+  font-family:var(--font-display);font-size:16px;font-weight:600;
+  letter-spacing:.01em;line-height:1.2;
+}
+.wish-card-item{font-size:13.5px;color:var(--ink);margin-top:4px;}
+.wish-card-meta{font-size:11.5px;color:var(--ink-soft);margin-top:8px;line-height:1.7;}
+.wish-card-notes{
+  font-size:12.5px;color:var(--ink-soft);margin:8px 0 0;
+  padding-left:9px;border-left:2px solid var(--line);
+}
+
+.wish-matches{
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+  margin-top:11px;padding:9px 10px;
+  background:var(--paper);border:1px dashed var(--line);border-radius:9px;
+}
+.wish-matches-empty{
+  display:block;font-size:12px;color:var(--ink-soft);border-style:solid;
+}
+.wish-match-head{
+  flex-basis:100%;font-size:11px;font-weight:700;color:var(--gold-ink);
+  text-transform:uppercase;letter-spacing:.04em;
+}
+.wish-match{
+  font-family:var(--font-body);font-size:12px;font-weight:600;
+  background:var(--paper-raised);color:var(--ink);
+  border:1px solid var(--line);border-radius:100px;
+  padding:6px 11px;cursor:pointer;text-align:left;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.wish-match:hover{border-color:var(--gold);}
+.wish-match.is-selected{background:var(--gold);color:var(--gold-ink);border-color:var(--gold);}
+.wish-fill-matches{display:flex;flex-wrap:wrap;gap:6px;}
+.wish-fill-matches:empty{display:none;}
+.wish-check{
+  display:flex;align-items:center;gap:9px;
+  font-size:13px;font-weight:600;color:var(--ink-soft);
+}
+.wish-check input{width:17px;height:17px;accent-color:var(--gold);}
+
+/* who's waiting, shown on a freshly logged item */
+.wish-alert{
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+  margin:0 0 14px;padding:11px 12px;
+  background:rgba(200,155,60,.1);border:1px solid var(--gold);border-radius:9px;
+}
+.wish-alert[hidden]{display:none;}
+.wish-alert-head{
+  flex-basis:100%;font-size:11.5px;font-weight:700;color:var(--gold-ink);
+  text-transform:uppercase;letter-spacing:.04em;
+}
+
+/* on an inventory card: somebody asked for one of these */
+.wanted-badge{
+  font-family:var(--font-body);font-size:11px;font-weight:700;
+  background:rgba(200,155,60,.16);color:var(--gold-ink);
+  padding:3px 8px;border-radius:100px;white-space:nowrap;display:inline-block;
+}
+
 /* ---- modal ---- */
 .modal-backdrop{
   position:fixed;inset:0;background:rgba(34,32,28,.5);
@@ -386,6 +458,14 @@ main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}
     gap:36px;align-items:start;
   }
   #panel-intake .panel-head{grid-column:1 / -1;}
+
+  #panel-wishlist.is-active{
+    display:grid;grid-template-columns:minmax(0,560px) minmax(0,1fr);
+    gap:36px;align-items:start;
+  }
+  #panel-wishlist .panel-head{grid-column:1 / -1;}
+  .wish-col + .wish-col{margin-top:0;}
+  .wish-list{max-width:720px;}
   #panel-intake .result-card{margin-top:0;}
 
   /* brick/masonry layout — photos keep their natural proportions instead of

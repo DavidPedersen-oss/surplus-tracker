@@ -7,9 +7,17 @@
 const SETTINGS_KEY = 'surplusTracker.settings';
 const CACHE_KEY    = 'surplusTracker.itemsCache';
 const QUEUE_KEY     = 'surplusTracker.queue';
+const WISH_CACHE_KEY = 'surplusTracker.wishCache';
+const WISH_QUEUE_KEY = 'surplusTracker.wishQueue';
 
+const SHEET_NAME    = 'Inventory';
 const SHEET_RANGE   = 'Inventory!A:L';
 const COLUMNS       = ['ItemCode','Category','Description','Dimensions','DateAdded','Status','ReservedBy','ReservedContact','ReservedDate','Notes','Qty','Condition'];
+// Wishlist lives in its own tab of the same spreadsheet; the app adds the tab
+// (with these headers) the first time it syncs, so there's nothing to set up.
+const WISH_SHEET    = 'Wishlist';
+const WISH_RANGE    = 'Wishlist!A:L';
+const WISH_COLUMNS  = ['RequestCode','Department','RequestedBy','Contact','Category','Item','Qty','Notes','DateRequested','Status','FilledWith','FilledDate'];
 const CATEGORY_LABELS = { B:'Bookshelf / Cabinet', T:'Table / Desk', C:'Chair', M:'Miscellaneous' };
 const SCOPE = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file';
 const DRIVE_FOLDER_NAME = 'Surplus Tracker Photos';
@@ -19,6 +27,8 @@ const DRIVE_FOLDER_NAME = 'Surplus Tracker Photos';
 let settings = Object.assign({}, window.APP_CONFIG || {}, loadSettings());
 let items = loadCache();          // array of item objects, newest-appended-last as stored, we sort for display
 let queue = loadQueue();          // { [itemCode]: itemObject }
+let wishes = loadWishCache();     // array of wishlist request objects
+let wishQueue = loadWishQueue();  // { [requestCode]: wishObject }
 let tokenClient = null;
 let accessToken = null;
 let pendingPhotos = [];           // File[]/Blob[] attached in the current intake form (camera or Drive)
@@ -43,6 +53,14 @@ function loadQueue(){
   try { return JSON.parse(localStorage.getItem(QUEUE_KEY)) || {}; } catch { return {}; }
 }
 function saveQueue(){ localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); }
+function loadWishCache(){
+  try { return JSON.parse(localStorage.getItem(WISH_CACHE_KEY)) || []; } catch { return []; }
+}
+function saveWishCache(){ localStorage.setItem(WISH_CACHE_KEY, JSON.stringify(wishes)); }
+function loadWishQueue(){
+  try { return JSON.parse(localStorage.getItem(WISH_QUEUE_KEY)) || {}; } catch { return {}; }
+}
+function saveWishQueue(){ localStorage.setItem(WISH_QUEUE_KEY, JSON.stringify(wishQueue)); }
 
 /* ---------------- toast ---------------- */
 let toastTimer = null;
@@ -57,15 +75,22 @@ function toast(msg){
 /* ---------------- date helpers ---------------- */
 function todayISO(){ return new Date().toISOString().slice(0,10); }
 function nowISO(){ return new Date().toISOString(); }
+// A date-only value (YYYY-MM-DD, what DateAdded/DateRequested store) parses as
+// UTC midnight, which then reads as the previous day anywhere west of Greenwich —
+// so treat those as local dates. Full timestamps are already unambiguous.
+function parseStoredDate(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  return m ? new Date(+m[1], +m[2]-1, +m[3]) : new Date(iso);
+}
 function formatDate(iso){
   if(!iso) return '—';
-  const d = new Date(iso);
+  const d = parseStoredDate(iso);
   if(isNaN(d)) return iso;
   return d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});
 }
 function daysSince(iso){
   if(!iso) return 0;
-  const then = new Date(iso).getTime();
+  const then = parseStoredDate(iso).getTime();
   if(isNaN(then)) return 0;
   return Math.max(0, Math.floor((Date.now()-then)/86400000));
 }
@@ -86,7 +111,7 @@ function initGoogleAuth(){
       accessToken = resp.access_token;
       setAuthUI(true);
       toast('Signed in');
-      flushQueue().then(refreshInventory);
+      flushQueue().then(flushWishQueue).then(refreshInventory);
     }
   });
 }
@@ -143,8 +168,10 @@ function itemToRow(item){
 }
 function camel(c){ return c.charAt(0).toLowerCase() + c.slice(1); }
 
-async function findSheetRowByCode(code){
-  const data = await sheetsFetch(`/values/${encodeURIComponent('Inventory!A:A')}`);
+function colLetter(n){ return String.fromCharCode('A'.charCodeAt(0) + n - 1); } // 12 -> 'L'
+
+async function findSheetRowByCode(code, sheetName = SHEET_NAME){
+  const data = await sheetsFetch(`/values/${encodeURIComponent(sheetName + '!A:A')}`);
   const rows = data.values || [];
   for(let i=1;i<rows.length;i++){
     if(rows[i][0] === code) return i+1; // 1-based row number
@@ -152,21 +179,29 @@ async function findSheetRowByCode(code){
   return null;
 }
 
-async function upsertItemToSheet(item){
-  const row = itemToRow(item);
-  const existingRow = await findSheetRowByCode(item.itemCode);
+// Write one object to its row in a tab, matching on the code in column A, or
+// append it if that code isn't there yet. Shared by Inventory and Wishlist.
+async function upsertRowToSheet(sheetName, columns, obj, keyField){
+  const row = columns.map(c => obj[camel(c)] || '');
+  const lastCol = colLetter(columns.length);
+  const existingRow = await findSheetRowByCode(obj[keyField], sheetName);
   if(existingRow){
-    const lastCol = String.fromCharCode('A'.charCodeAt(0) + COLUMNS.length - 1); // 'L' for 12 columns
-    await sheetsFetch(`/values/${encodeURIComponent(`Inventory!A${existingRow}:${lastCol}${existingRow}`)}?valueInputOption=USER_ENTERED`, {
+    const range = `${sheetName}!A${existingRow}:${lastCol}${existingRow}`;
+    await sheetsFetch(`/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`, {
       method:'PUT',
-      body: JSON.stringify({ range:`Inventory!A${existingRow}:${lastCol}${existingRow}`, values:[row] })
+      body: JSON.stringify({ range, values:[row] })
     });
   } else {
-    await sheetsFetch(`/values/${encodeURIComponent(SHEET_RANGE)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    const range = `${sheetName}!A:${lastCol}`;
+    await sheetsFetch(`/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
       method:'POST',
       body: JSON.stringify({ values:[row] })
     });
   }
+}
+
+function upsertItemToSheet(item){
+  return upsertRowToSheet(SHEET_NAME, COLUMNS, item, 'itemCode');
 }
 
 /* ---------------- Google Drive ---------------- */
@@ -470,6 +505,7 @@ async function refreshInventory(){
     const got = await ensureAuth();
     if(!got) return;
   }
+  await refreshWishlist({ silent:true });
   try{
     const remote = await sheetsGetAllRows();
     // merge: queued local edits win over remote until they sync
@@ -481,6 +517,7 @@ async function refreshInventory(){
     await refreshDriveThumbs();
     renderInventoryList();
     renderReservedList();
+    renderWishlist(); // matches depend on what's available
     toast('Inventory synced');
   } catch(e){
     console.error(e);
@@ -602,14 +639,15 @@ async function downloadRenamedPhotos(code, files){
 function sanitizeFolderName(name){
   return (name || 'item').replace(/[\\/:*?"<>|]/g,'-').trim().slice(0,80) || 'item';
 }
-function itemsToCSV(list){
+function toCSV(columns, rows){
   const esc = v => {
     const s = String(v==null ? '' : v);
     return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
   };
-  const rows = [COLUMNS, ...list.map(itemToRow)];
-  return rows.map(r => r.map(esc).join(',')).join('\r\n');
+  return [columns, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
 }
+function itemsToCSV(list){ return toCSV(COLUMNS, list.map(itemToRow)); }
+function wishesToCSV(list){ return toCSV(WISH_COLUMNS, list.map(wishToRow)); }
 function buildExportDetails(item){
   const lines = [buildStackedCaption(item), '', buildSharePointBlock(item)];
   if(item.notes) lines.push('', `Notes: ${item.notes}`);
@@ -624,6 +662,7 @@ async function exportInventoryZip(){
   try{
     const zip = new JSZip();
     zip.file('inventory.csv', itemsToCSV(items));
+    if(wishes.length) zip.file('wishlist.csv', wishesToCSV(wishes));
 
     let driveFiles = [];
     if(await ensureAuth()){
@@ -671,9 +710,13 @@ function tagCardHTML(item){
     const d = daysSince(item.reservedDate);
     ageBadge = `<span class="age-badge ${ageClass(d)}">${d}d reserved</span>`;
   }
+  const wanted = item.status === 'Available' ? wishesWantingItem(item) : [];
   const actions = [];
   if(item.status === 'Available'){
     actions.push(`<button data-action="reserve" data-code="${item.itemCode}" class="primary-action">Reserve</button>`);
+  }
+  if(wanted.length){
+    actions.push(`<button data-action="fillwish" data-code="${item.itemCode}">Fill a request</button>`);
   }
   if(item.status === 'Reserved'){
     actions.push(`<button data-action="email" data-code="${item.itemCode}">Confirmation text</button>`);
@@ -688,6 +731,9 @@ function tagCardHTML(item){
   const meta = item.status === 'Reserved'
     ? `${item.reservedBy || 'Unknown'} · reserved ${formatDate(item.reservedDate)}`
     : `Added ${formatDate(item.dateAdded)}`;
+  const wantedBadge = wanted.length
+    ? `<span class="wanted-badge" title="${escapeHTML(wanted.map(w => w.department).join(', '))}">★ wanted by ${escapeHTML(wanted[0].department)}${wanted.length > 1 ? ` +${wanted.length - 1}` : ''}</span>`
+    : '';
   const thumbUrl = driveThumbs[item.itemCode] && driveThumbs[item.itemCode].url;
   const thumbHTML = thumbUrl
     ? `<img class="tag-card-photo" src="${thumbUrl}" alt="" loading="lazy">`
@@ -715,7 +761,7 @@ function tagCardHTML(item){
           ${miniThumbHTML}
           <pre class="tag-card-sp-block">${escapeHTML(buildSharePointBlock(item))}</pre>
         </div>
-        <div class="tag-card-meta">${meta} ${ageBadge}</div>
+        <div class="tag-card-meta">${meta} ${ageBadge} ${wantedBadge}</div>
         <div class="tag-card-actions">${actions.join('')}</div>
       </div>
     </div>
@@ -759,6 +805,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderInventoryList();
   renderReservedList();
   updateCodePreview();
+  wireWishlist();
 
   // nav
   document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -768,7 +815,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // sign in
   document.getElementById('authBtn').addEventListener('click', async () => {
     const ok = await ensureAuth();
-    if(ok){ await flushQueue(); await refreshInventory(); }
+    if(ok){ await flushQueue(); await flushWishQueue(); await refreshInventory(); }
   });
 
   // sign out (separate, confirmed — so a stray tap can't sign you out)
@@ -914,6 +961,7 @@ document.addEventListener('DOMContentLoaded', () => {
     queueUpsert(item);
     renderInventoryList();
     renderReservedList();
+    renderWishlist();
 
     const photosForUpload = pendingPhotos;
 
@@ -923,6 +971,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('captionLine').textContent = buildLineCaption(item);
     document.getElementById('captionSharePoint').textContent = buildSharePointBlock(item);
     document.getElementById('intakeResult').hidden = false;
+    showIntakeWishAlert(item);
     document.getElementById('downloadPhotosBtn').dataset.code = code;
     document.getElementById('downloadPhotosBtn')._photos = photosForUpload;
 
@@ -976,6 +1025,12 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('app').addEventListener('click', (e) => {
     if(suppressNextCardClick){ suppressNextCardClick = false; return; }
 
+    const wbtn = e.target.closest('button[data-waction]');
+    if(wbtn){
+      handleWishAction(wbtn.dataset.waction, wbtn.dataset.wcode, wbtn.dataset.code);
+      return;
+    }
+
     const btn = e.target.closest('button[data-action]');
     if(btn){
       const code = btn.dataset.code;
@@ -990,6 +1045,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if(action === 'email')   openEmailModal(item);
       if(action === 'sharepoint') openSharePointModal(item);
       if(action === 'edit')    openEditModal(item);
+      if(action === 'fillwish'){
+        // Straight from the item to the request it can close out.
+        const want = wishesWantingItem(item);
+        if(!want.length){ toast('No open request matches this any more'); return; }
+        activateTab('wishlist');
+        openWishFillModal(want[0]);
+        document.getElementById('wishFillCodeInput').value = item.itemCode;
+      }
       return;
     }
 
@@ -1075,7 +1138,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('signInModalConfirm').addEventListener('click', async () => {
     closeSignInModal();
     const ok = await ensureAuth();
-    if(ok){ await flushQueue(); await refreshInventory(); }
+    if(ok){ await flushQueue(); await flushWishQueue(); await refreshInventory(); }
   });
 
   // kick off
@@ -1100,6 +1163,7 @@ function persistItem(item){
   queueUpsert(item);
   renderInventoryList();
   renderReservedList();
+  renderWishlist(); // an item changing status changes which requests it can fill
 }
 function setStatus(item, status){
   item.status = status;
@@ -1216,4 +1280,480 @@ function copyText(text){
     () => toast('Copied'),
     () => toast('Could not copy — select and copy manually')
   );
+}
+
+/* ================= WISHLIST =================
+   Department requests: what people have asked us to look out for, who asked,
+   and how long they've been waiting. Lives in its own tab of the same Sheet
+   (created on demand), with the same offline queue + local cache as Inventory.
+--------------------------------------------- */
+
+/* ---------------- wishlist sheet plumbing ---------------- */
+let wishSheetReady = false;
+async function ensureWishlistSheet(){
+  if(wishSheetReady) return;
+  const meta = await sheetsFetch('?fields=sheets.properties.title');
+  const exists = (meta.sheets || []).some(s => s.properties && s.properties.title === WISH_SHEET);
+  if(!exists){
+    try{
+      await sheetsFetch(':batchUpdate', {
+        method:'POST',
+        body: JSON.stringify({ requests:[{ addSheet:{ properties:{ title: WISH_SHEET } } }] })
+      });
+    } catch(e){
+      // Another device may have created the tab between our check and this call.
+      const again = await sheetsFetch('?fields=sheets.properties.title');
+      if(!(again.sheets || []).some(s => s.properties && s.properties.title === WISH_SHEET)) throw e;
+      wishSheetReady = true;
+      return;
+    }
+    const headerRange = `${WISH_SHEET}!A1:${colLetter(WISH_COLUMNS.length)}1`;
+    await sheetsFetch(`/values/${encodeURIComponent(headerRange)}?valueInputOption=RAW`, {
+      method:'PUT',
+      body: JSON.stringify({ range: headerRange, values:[WISH_COLUMNS] })
+    });
+  }
+  wishSheetReady = true;
+}
+
+function rowToWish(row){
+  const o = {};
+  WISH_COLUMNS.forEach((c,i) => { o[camel(c)] = row[i] || ''; });
+  return o;
+}
+function wishToRow(wish){ return WISH_COLUMNS.map(c => wish[camel(c)] || ''); }
+
+/* ---------------- wishlist sync ---------------- */
+function queueWishUpsert(wish){
+  wishQueue[wish.requestCode] = wish;
+  saveWishQueue();
+  if(accessToken) flushWishQueue();
+}
+async function flushWishQueue(){
+  const codes = Object.keys(wishQueue);
+  if(codes.length === 0 || !accessToken) return;
+  try{
+    await ensureWishlistSheet();
+  } catch(e){
+    console.error('could not prepare the Wishlist tab', e);
+    toast('Could not reach the Wishlist tab — requests stay on this device for now');
+    return;
+  }
+  let ok = 0, fail = 0;
+  for(const code of codes){
+    try{
+      await upsertRowToSheet(WISH_SHEET, WISH_COLUMNS, wishQueue[code], 'requestCode');
+      delete wishQueue[code];
+      ok++;
+    } catch(e){
+      fail++;
+      console.error('wishlist sync failed for', code, e);
+    }
+  }
+  saveWishQueue();
+  if(ok) toast(`Synced ${ok} request${ok===1?'':'s'}${fail? `, ${fail} failed`:''}`);
+  else if(fail) toast(`Wishlist sync failed for ${fail} request${fail===1?'':'s'}`);
+}
+
+async function refreshWishlist(opts={}){
+  const silent = !!opts.silent;
+  if(!accessToken){
+    if(silent) return;
+    const got = await ensureAuth();
+    if(!got) return;
+  }
+  try{
+    await ensureWishlistSheet();
+    const data = await sheetsFetch(`/values/${encodeURIComponent(WISH_RANGE)}`);
+    const remote = (data.values || []).slice(1).filter(r => r[0]).map(rowToWish);
+    const map = new Map(remote.map(w => [w.requestCode, w]));
+    Object.values(wishQueue).forEach(w => map.set(w.requestCode, w)); // local edits win until synced
+    wishes = Array.from(map.values());
+    saveWishCache();
+    renderWishlist();
+    updateWishCodePreview();
+    if(!silent) toast('Wishlist synced');
+  } catch(e){
+    console.error(e);
+    if(!silent) toast('Could not reach the Wishlist tab — check Settings');
+  }
+}
+
+/* ---------------- request codes ---------------- */
+function nextWishCode(){
+  const nums = wishes
+    .map(w => parseInt((w.requestCode||'').slice(1),10))
+    .filter(n => !isNaN(n));
+  return 'W' + String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3,'0');
+}
+function updateWishCodePreview(){
+  const el = document.getElementById('wishCodePreview');
+  if(el) el.textContent = nextWishCode();
+}
+
+/* ---------------- matching requests to stock ----------------
+   Deliberately simple and explainable: a shared keyword is worth 2, the right
+   category another 2, the wrong category -2. One shared keyword (or the right
+   category on a vague "any chair" request) is enough to surface. It's a prompt
+   to go look, never an automatic decision.
+------------------------------------------------------------- */
+const MATCH_STOPWORDS = new Set([
+  'the','and','for','with','any','some','need','needs','needed','want','wants','wanted',
+  'looking','look','please','item','items','piece','pieces','unit','units','something',
+  'anything','preferably','ideally','ask','asked','asking','their','they','one','two',
+  'about','around','from','that','this','have','has','would','like','are','our','can'
+]);
+function matchTokens(text){
+  return (text || '').toLowerCase()
+    .replace(/[^a-z0-9\s]/g,' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !MATCH_STOPWORDS.has(w) && !/^\d+$/.test(w))
+    .map(w => (w.length > 4 && w.endsWith('s')) ? w.slice(0,-1) : w);
+}
+function wishItemScore(wish, item){
+  const want = new Set(matchTokens(`${wish.item||''} ${wish.notes||''}`));
+  const have = new Set(matchTokens(`${item.description||''} ${item.notes||''} ${CATEGORY_LABELS[item.category]||''}`));
+  let score = 0;
+  want.forEach(w => { if(have.has(w)) score += 2; });
+  if(wish.category && wish.category !== 'Any'){
+    score += (item.category === wish.category) ? 2 : -2;
+  }
+  return score;
+}
+const MATCH_THRESHOLD = 2;
+const MATCH_LIMIT = 6;
+
+// Available stock that looks like what this open request asked for.
+function matchesForWish(wish){
+  if((wish.status || 'Open') !== 'Open') return [];
+  return items
+    .filter(i => i.status === 'Available')
+    .map(i => ({ item:i, score: wishItemScore(wish, i) }))
+    .filter(x => x.score >= MATCH_THRESHOLD)
+    .sort((a,b) => b.score - a.score || (b.item.dateAdded||'').localeCompare(a.item.dateAdded||''))
+    .slice(0, MATCH_LIMIT)
+    .map(x => x.item);
+}
+// The other direction: open requests that this one item could satisfy.
+function wishesWantingItem(item){
+  return wishes
+    .filter(w => (w.status || 'Open') === 'Open')
+    .map(w => ({ wish:w, score: wishItemScore(w, item) }))
+    .filter(x => x.score >= MATCH_THRESHOLD)
+    .sort((a,b) => b.score - a.score)
+    .map(x => x.wish);
+}
+
+/* ---------------- wishlist email text ---------------- */
+function buildWishEmailText(wish, item){
+  const greeting = wish.requestedBy ? `Hi ${wish.requestedBy},` : 'Hello,';
+  const lines = [
+    `Subject: Surplus request ${wish.requestCode} — we found something`,
+    '',
+    greeting,
+    '',
+    `You asked us to keep an eye out for: ${wish.item}`,
+    `Requested on: ${formatDate(wish.dateRequested)}`,
+    ''
+  ];
+  if(item){
+    lines.push('We now have something that fits:');
+    lines.push('');
+    lines.push(buildStackedCaption(item));
+    lines.push('');
+    lines.push("It's being held for you for 30 days from today. Let us know when you'd like to arrange pickup, or if it isn't what you had in mind and we should keep looking.");
+  } else {
+    lines.push("Something has come in that may fit what you asked for — let us know if you'd like to come take a look.");
+  }
+  lines.push('');
+  lines.push('Thanks,');
+  lines.push('CSULB Parking & Operations — Surplus Program');
+  return lines.join('\n');
+}
+
+/* ---------------- wishlist rendering ---------------- */
+function wishCardHTML(wish){
+  const status = wish.status || 'Open';
+  const statusClass = 'status-' + status.toLowerCase();
+  const matches = matchesForWish(wish);
+
+  let ageBadge = '';
+  if(status === 'Open' && wish.dateRequested){
+    const d = daysSince(wish.dateRequested);
+    ageBadge = `<span class="age-badge ${ageClass(d)}">${d}d waiting</span>`;
+  }
+
+  const metaBits = [wish.requestCode, `asked ${formatDate(wish.dateRequested)}`];
+  if(wish.requestedBy) metaBits.push(escapeHTML(wish.requestedBy));
+  if(wish.contact) metaBits.push(escapeHTML(wish.contact));
+  if(wish.qty && wish.qty !== '1') metaBits.push(`qty ${escapeHTML(wish.qty)}`);
+  metaBits.push(wish.category && wish.category !== 'Any'
+    ? escapeHTML(CATEGORY_LABELS[wish.category] || wish.category)
+    : 'any category');
+
+  const notesHTML = wish.notes ? `<p class="wish-card-notes">${escapeHTML(wish.notes)}</p>` : '';
+
+  let matchHTML = '';
+  if(status === 'Open'){
+    matchHTML = matches.length
+      ? `<div class="wish-matches">
+           <span class="wish-match-head">${matches.length} possible match${matches.length===1?'':'es'} available now</span>
+           ${matches.map(i => `<button type="button" class="wish-match" data-waction="showmatch" data-wcode="${wish.requestCode}" data-code="${i.itemCode}">${i.itemCode} · ${escapeHTML(i.description)}</button>`).join('')}
+         </div>`
+      : '<div class="wish-matches wish-matches-empty">Nothing in stock looks like this yet.</div>';
+  } else if(status === 'Filled'){
+    matchHTML = `<div class="wish-matches wish-matches-empty">Filled ${formatDate(wish.filledDate)}${wish.filledWith ? ` with ${escapeHTML(wish.filledWith)}` : ''}.</div>`;
+  }
+
+  const actions = [];
+  if(status === 'Open'){
+    actions.push(`<button data-waction="fill" data-wcode="${wish.requestCode}" class="primary-action">Found a match</button>`);
+    actions.push(`<button data-waction="notify" data-wcode="${wish.requestCode}">Heads-up text</button>`);
+    actions.push(`<button data-waction="edit" data-wcode="${wish.requestCode}">Edit</button>`);
+    actions.push(`<button data-waction="cancel" data-wcode="${wish.requestCode}">Cancel request</button>`);
+  } else {
+    actions.push(`<button data-waction="reopen" data-wcode="${wish.requestCode}" class="primary-action">Reopen</button>`);
+    if(status === 'Filled') actions.push(`<button data-waction="notify" data-wcode="${wish.requestCode}">Heads-up text</button>`);
+    actions.push(`<button data-waction="edit" data-wcode="${wish.requestCode}">Edit</button>`);
+  }
+
+  return `
+  <div class="wish-card" data-wcode="${wish.requestCode}">
+    <div class="wish-card-head">
+      <div class="wish-card-headline">
+        <div class="wish-card-dept">${escapeHTML(wish.department)}</div>
+        <div class="wish-card-item">${escapeHTML(wish.item)}</div>
+      </div>
+      <span class="status-stamp ${statusClass}">${status}</span>
+    </div>
+    <div class="wish-card-meta">${metaBits.join(' · ')} ${ageBadge}</div>
+    ${notesHTML}
+    ${matchHTML}
+    <div class="tag-card-actions">${actions.join('')}</div>
+  </div>`;
+}
+
+function renderWishlist(){
+  const el = document.getElementById('wishlistList');
+  if(!el) return;
+  const searchEl = document.getElementById('wishSearch');
+  const filterEl = document.getElementById('wishStatusFilter');
+  const search = (searchEl ? searchEl.value : '').trim().toLowerCase();
+  const statusFilter = filterEl ? filterEl.value : '';
+
+  let list = [...wishes].sort((a,b) => (b.dateRequested||'').localeCompare(a.dateRequested||''));
+  if(search){
+    list = list.filter(w =>
+      (w.department||'').toLowerCase().includes(search) ||
+      (w.item||'').toLowerCase().includes(search) ||
+      (w.requestedBy||'').toLowerCase().includes(search) ||
+      (w.notes||'').toLowerCase().includes(search) ||
+      (w.requestCode||'').toLowerCase().includes(search));
+  }
+  if(statusFilter) list = list.filter(w => (w.status||'Open') === statusFilter);
+
+  el.innerHTML = list.length
+    ? list.map(wishCardHTML).join('')
+    : `<div class="empty-state">${wishes.length
+        ? 'No requests match that filter.'
+        : "Nothing requested yet. Add what a department asked for and it'll show up here whenever matching stock comes in."}</div>`;
+}
+
+function persistWish(wish){
+  saveWishCache();
+  queueWishUpsert(wish);
+  renderWishlist();
+}
+
+/* ---------------- wishlist actions ---------------- */
+function handleWishAction(action, code, itemCode){
+  const wish = wishes.find(w => w.requestCode === code);
+  if(!wish) return;
+
+  if(action === 'showmatch'){
+    // Jump to the item on the Inventory tab so you can reserve it there.
+    activateTab('inventory');
+    document.getElementById('invSearch').value = itemCode;
+    document.getElementById('invStatusFilter').value = '';
+    renderInventoryList();
+    window.scrollTo({ top:0, behavior:'smooth' });
+    return;
+  }
+  if(action === 'fill')   { openWishFillModal(wish); return; }
+  if(action === 'notify') { openWishNotifyModal(wish); return; }
+  if(action === 'edit')   { openWishEditModal(wish); return; }
+  if(action === 'cancel'){
+    if(!confirm(`Cancel ${wish.requestCode} — ${wish.department}'s request? It stays on the list marked Cancelled.`)) return;
+    wish.status = 'Cancelled';
+    persistWish(wish);
+    toast(`${wish.requestCode} cancelled`);
+    return;
+  }
+  if(action === 'reopen'){
+    wish.status = 'Open';
+    wish.filledWith = '';
+    wish.filledDate = '';
+    persistWish(wish);
+    toast(`${wish.requestCode} reopened`);
+  }
+}
+
+/* ---------------- wishlist modals ---------------- */
+let fillingWishCode = null;
+function openWishFillModal(wish){
+  fillingWishCode = wish.requestCode;
+  document.getElementById('wishFillModalCode').textContent = `${wish.requestCode} — ${wish.department}: ${wish.item}`;
+  const matches = matchesForWish(wish);
+  const grid = document.getElementById('wishFillMatches');
+  grid.innerHTML = matches.length
+    ? matches.map(i => `<button type="button" class="wish-match" data-fillcode="${i.itemCode}">${i.itemCode} · ${escapeHTML(i.description)}</button>`).join('')
+    : '<span class="field-hint">No available item looks like a match — type a code below if you have one in mind.</span>';
+  grid.querySelectorAll('[data-fillcode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('wishFillCodeInput').value = btn.dataset.fillcode;
+      grid.querySelectorAll('[data-fillcode]').forEach(b => b.classList.toggle('is-selected', b === btn));
+    });
+  });
+  document.getElementById('wishFillCodeInput').value = '';
+  document.getElementById('wishFillReserve').checked = true;
+  document.getElementById('wishFillModalBackdrop').hidden = false;
+}
+function closeWishFillModal(){
+  document.getElementById('wishFillModalBackdrop').hidden = true;
+  fillingWishCode = null;
+}
+function confirmWishFill(){
+  const wish = wishes.find(w => w.requestCode === fillingWishCode);
+  if(!wish) return;
+  const itemCode = document.getElementById('wishFillCodeInput').value.trim().toUpperCase();
+  const alsoReserve = document.getElementById('wishFillReserve').checked;
+
+  let item = null;
+  if(itemCode){
+    item = items.find(i => i.itemCode === itemCode);
+    if(!item){ toast(`No item called ${itemCode} — check the code`); return; }
+  }
+
+  wish.status = 'Filled';
+  wish.filledWith = item ? item.itemCode : '';
+  wish.filledDate = nowISO();
+  persistWish(wish);
+
+  if(item && alsoReserve && item.status === 'Available'){
+    item.status = 'Reserved';
+    item.reservedBy = wish.department;
+    item.reservedContact = wish.contact || '';
+    item.reservedDate = nowISO();
+    persistItem(item);
+    toast(`${wish.requestCode} filled — ${item.itemCode} reserved for ${wish.department}`);
+  } else if(item && alsoReserve){
+    toast(`${wish.requestCode} filled — ${item.itemCode} is already ${item.status.toLowerCase()}`);
+  } else {
+    toast(`${wish.requestCode} marked filled`);
+  }
+
+  closeWishFillModal();
+  openWishNotifyModal(wish);
+}
+
+let editingWishCode = null;
+function openWishEditModal(wish){
+  editingWishCode = wish.requestCode;
+  document.getElementById('wishEditModalCode').textContent = `${wish.requestCode} — asked ${formatDate(wish.dateRequested)}`;
+  document.getElementById('weDepartment').value  = wish.department || '';
+  document.getElementById('weRequestedBy').value = wish.requestedBy || '';
+  document.getElementById('weContact').value     = wish.contact || '';
+  document.getElementById('weItem').value        = wish.item || '';
+  document.getElementById('weCategory').value    = wish.category || 'Any';
+  document.getElementById('weQty').value         = wish.qty || '1';
+  document.getElementById('weNotes').value       = wish.notes || '';
+  document.getElementById('wishEditModalBackdrop').hidden = false;
+}
+function closeWishEditModal(){
+  document.getElementById('wishEditModalBackdrop').hidden = true;
+  editingWishCode = null;
+}
+
+function openWishNotifyModal(wish){
+  const item = wish.filledWith ? items.find(i => i.itemCode === wish.filledWith) : null;
+  document.getElementById('wishNotifyText').textContent = buildWishEmailText(wish, item);
+  document.getElementById('wishNotifyModalBackdrop').hidden = false;
+}
+function closeWishNotifyModal(){ document.getElementById('wishNotifyModalBackdrop').hidden = true; }
+
+/* ---------------- intake heads-up ---------------- */
+// Called right after an item is logged: says who's been waiting for one of these.
+function showIntakeWishAlert(item){
+  const el = document.getElementById('intakeWishAlert');
+  const hits = wishesWantingItem(item);
+  if(!hits.length){ el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <span class="wish-alert-head">${hits.length} department${hits.length===1?' has':'s have'} asked for something like this</span>
+    ${hits.map(w => `<button type="button" class="wish-match" data-waction="fill" data-wcode="${w.requestCode}">${escapeHTML(w.department)} · ${escapeHTML(w.item)}</button>`).join('')}`;
+  el.hidden = false;
+  toast(`Heads up — ${hits.length} open request${hits.length===1?'':'s'} match${hits.length===1?'es':''} this`);
+}
+
+/* ---------------- wishlist wiring ---------------- */
+function wireWishlist(){
+  updateWishCodePreview();
+  renderWishlist();
+
+  document.getElementById('wishForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const wish = {
+      requestCode: nextWishCode(),
+      department: document.getElementById('wDepartment').value.trim(),
+      requestedBy: document.getElementById('wRequestedBy').value.trim(),
+      contact: document.getElementById('wContact').value.trim(),
+      category: document.getElementById('wCategory').value,
+      item: document.getElementById('wItem').value.trim(),
+      qty: document.getElementById('wQty').value.trim() || '1',
+      notes: document.getElementById('wNotes').value.trim(),
+      dateRequested: todayISO(),
+      status: 'Open',
+      filledWith: '',
+      filledDate: ''
+    };
+    wishes.unshift(wish);
+    persistWish(wish);
+
+    e.target.reset();
+    document.getElementById('wQty').value = '1';
+    updateWishCodePreview();
+
+    const n = matchesForWish(wish).length;
+    toast(n
+      ? `${wish.requestCode} added — ${n} possible match${n===1?'':'es'} in stock already`
+      : `${wish.requestCode} added — matching intake will flag it`);
+  });
+
+  document.getElementById('wishSearch').addEventListener('input', renderWishlist);
+  document.getElementById('wishStatusFilter').addEventListener('change', renderWishlist);
+  document.getElementById('refreshWishlist').addEventListener('click', () => refreshWishlist());
+
+  document.getElementById('wishFillModalCancel').addEventListener('click', closeWishFillModal);
+  document.getElementById('wishFillModalConfirm').addEventListener('click', confirmWishFill);
+
+  document.getElementById('wishEditModalCancel').addEventListener('click', closeWishEditModal);
+  document.getElementById('wishEditForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const wish = wishes.find(w => w.requestCode === editingWishCode);
+    if(!wish) return;
+    wish.department  = document.getElementById('weDepartment').value.trim();
+    wish.requestedBy = document.getElementById('weRequestedBy').value.trim();
+    wish.contact     = document.getElementById('weContact').value.trim();
+    wish.item        = document.getElementById('weItem').value.trim();
+    wish.category    = document.getElementById('weCategory').value;
+    wish.qty         = document.getElementById('weQty').value.trim() || '1';
+    wish.notes       = document.getElementById('weNotes').value.trim();
+    persistWish(wish);
+    closeWishEditModal();
+    toast('Request updated');
+  });
+
+  document.getElementById('wishNotifyModalClose').addEventListener('click', closeWishNotifyModal);
+  document.getElementById('wishNotifyModalCopy').addEventListener('click', () => {
+    copyText(document.getElementById('wishNotifyText').textContent);
+  });
 }

@@ -3,7 +3,8 @@
 A standalone, phone-friendly web app for the furniture surplus workflow: log an item,
 get its code and SharePoint captions instantly, pull in photos from Google Drive or
 your camera, let AI guess the category and read handwritten dimensions, download
-renamed photos, and track reservations with an aging clock.
+renamed photos, track reservations with an aging clock, and keep a wishlist of what
+departments have asked you to watch for.
 
 It does **not** touch your SharePoint page directly (that needs IT-managed Microsoft
 Graph API access you don't have). You still copy the caption and drag the renamed
@@ -47,6 +48,9 @@ settings screen.
 
 4. Copy the Sheet ID out of the URL — the long string between `/d/` and `/edit`.
 5. Share the sheet (File → Share) with anyone else who'll use the app, as Editor.
+
+You don't need to create a second tab for the wishlist — the app adds a `Wishlist`
+tab (with its own headers) to this same sheet the first time it syncs one.
 
 ---
 
@@ -185,6 +189,32 @@ Add it to your phone's home screen (Share → Add to Home Screen) so it opens li
 **Reservations, aging clock, email text:** unchanged from before — see the Inventory
 and Reserved tabs.
 
+**Wishlist — remembering who asked for what:**
+
+Departments ask for things you don't have yet. The Wishlist tab is where those asks
+go so they don't live in your head or a chain of emails.
+
+1. **Wishlist** tab → fill in the department, who asked, their contact, what they're
+   after, and (optionally) a category and quantity. It gets a code like `W001` and
+   starts an aging clock, same as a reservation.
+2. Each open request shows **possible matches** — available inventory whose
+   description shares keywords with the ask, or that's simply in the category they
+   asked for. Tap a match to jump to that item on the Inventory tab.
+3. Going the other way: an available item that somebody's waiting for gets a
+   **★ wanted by …** badge on its inventory card, plus a **Fill a request** button.
+4. Saving a new item on the Intake tab checks the wishlist automatically — if
+   anyone's been waiting for something like it, the result card says who, right
+   there, before you move on.
+5. **Found a match** on a request lets you pick (or type) the item code, marks the
+   request Filled, and — unless you untick the box — reserves that item for the
+   department in one step. It then hands you a ready-to-paste heads-up email.
+6. Requests can be edited, cancelled, and reopened; cancelled and filled ones stay
+   on the list (filter by status) so you keep the history of who asked for what.
+
+Matching is deliberately dumb and predictable: a shared keyword counts, the right
+category counts, the wrong category counts against. It's a prompt to go look, never
+an automatic decision — nothing gets reserved without you clicking.
+
 ---
 
 ## Notes & limits
@@ -199,6 +229,11 @@ and Reserved tabs.
   DeepSeek directly" above.
 - AI suggestions are a starting point, not a source of truth — it's still your call
   on category, description, and dimensions before saving.
+- Wishlist matching is plain keyword/category overlap computed in the browser — no
+  AI call, no cost, and it works offline. It will miss synonyms ("credenza" won't
+  find "cabinet"), so the search box on the Inventory tab is still worth a look.
+- Wishlist requests use the same offline queue as inventory: added signed out or
+  with no signal, they save on the device and push to the sheet on the next sync.
 - Caption/email/SharePoint-block wording is easy to tweak in `app.js`
   (`buildStackedCaption` / `buildLineCaption` / `buildEmailText` / `buildSharePointBlock`)
   any time.
