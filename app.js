@@ -9,6 +9,7 @@ const CACHE_KEY    = 'surplusTracker.itemsCache';
 const QUEUE_KEY     = 'surplusTracker.queue';
 const WISH_CACHE_KEY = 'surplusTracker.wishCache';
 const WISH_QUEUE_KEY = 'surplusTracker.wishQueue';
+const TOKEN_KEY      = 'surplusTracker.token';
 
 const SHEET_NAME    = 'Inventory';
 const SHEET_RANGE   = 'Inventory!A:L';
@@ -62,6 +63,39 @@ function loadWishQueue(){
 }
 function saveWishQueue(){ localStorage.setItem(WISH_QUEUE_KEY, JSON.stringify(wishQueue)); }
 
+/* ---------------- access token ----------------
+   Google's browser sign-in hands back a token that's good for about an hour and
+   can't be refreshed offline. Keeping it only in memory meant every page load
+   started signed out — and mobile browsers reload the page when you come back
+   from the camera, so a normal "photo, photo, save" round trip asked you to sign
+   in again. Persisting it means one sign-in per hour of use instead of one per
+   page load. It's a short-lived, narrowly-scoped token (this sheet + files this
+   app created), it's cleared on sign-out, and it was already readable by any
+   script on the page while in memory.
+------------------------------------------------ */
+function loadStoredToken(){
+  try{
+    const t = JSON.parse(localStorage.getItem(TOKEN_KEY));
+    // Treat a nearly-expired token as already gone, so we don't start a
+    // multi-step sync that dies partway through.
+    if(t && t.token && t.expiresAt && t.expiresAt - Date.now() > 120000) return t;
+  } catch {}
+  return null;
+}
+function storeToken(token, expiresInSec){
+  accessToken = token;
+  try{
+    localStorage.setItem(TOKEN_KEY, JSON.stringify({
+      token,
+      expiresAt: Date.now() + (Number(expiresInSec) || 3600) * 1000
+    }));
+  } catch {}
+}
+function clearStoredToken(){
+  accessToken = null;
+  try{ localStorage.removeItem(TOKEN_KEY); } catch {}
+}
+
 /* ---------------- toast ---------------- */
 let toastTimer = null;
 function toast(msg){
@@ -108,12 +142,71 @@ function initGoogleAuth(){
     scope: SCOPE,
     callback: (resp) => {
       if(resp.error){ toast('Sign-in failed: ' + resp.error); return; }
-      accessToken = resp.access_token;
+      storeToken(resp.access_token, resp.expires_in);
       setAuthUI(true);
       toast('Signed in');
       flushQueue().then(flushWishQueue).then(refreshInventory);
+    },
+    // Fires for non-OAuth failures — most usefully, a popup the browser blocked
+    // because there was no user gesture behind it. Without this, a silent
+    // refresh that can't stay silent just hangs until the timeout below.
+    error_callback: (err) => {
+      if(typeof pendingSilentFail === 'function'){ pendingSilentFail(err); return; }
+      console.error('sign-in error', err);
     }
   });
+}
+let pendingSilentFail = null;
+
+// Ask Google for a fresh token without showing anything. Works when consent is
+// already granted and the Google session is still live; fails fast otherwise
+// (blocked third-party cookies will do it), so every caller needs a fallback.
+// The timeout is the safety net for the case where GIS simply goes quiet.
+function requestTokenSilently(){
+  return new Promise((resolve) => {
+    if(!tokenClient){ resolve(false); return; }
+    const orig = tokenClient.callback;
+    let settled = false;
+    const finish = (ok) => {
+      if(settled) return;
+      settled = true;
+      tokenClient.callback = orig;
+      pendingSilentFail = null;
+      resolve(ok);
+    };
+    tokenClient.callback = (resp) => {
+      if(resp.error || !resp.access_token){ finish(false); return; }
+      storeToken(resp.access_token, resp.expires_in);
+      setAuthUI(true);
+      finish(true);
+    };
+    // A blocked popup means it couldn't stay silent — give up now, don't stall.
+    pendingSilentFail = () => finish(false);
+    setTimeout(() => finish(false), 8000);
+    try { tokenClient.requestAccessToken({ prompt: '' }); }
+    catch(e){ console.error('silent token refresh failed', e); finish(false); }
+  });
+}
+
+// Every authenticated request goes through here, so a token that quietly expired
+// mid-session refreshes and retries once instead of surfacing as an unexplained
+// "sync failed". Pass contentType:null for plain GETs that shouldn't declare one.
+async function authedFetch(url, options={}, contentType='application/json'){
+  const send = () => fetch(url, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      ...(contentType ? { 'Content-Type': contentType } : {}),
+      ...(options.headers || {})
+    }
+  });
+  let res = await send();
+  if(res.status === 401){
+    clearStoredToken();
+    if(await requestTokenSilently()) res = await send();
+    else setAuthUI(false); // be honest about it rather than failing silently
+  }
+  return res;
 }
 function setAuthUI(signedIn){
   document.getElementById('authBtn').hidden = signedIn;
@@ -128,7 +221,7 @@ function ensureAuth(){
     tokenClient.callback = (resp) => {
       tokenClient.callback = orig;
       if(resp.error){ toast('Sign-in failed'); resolve(false); return; }
-      accessToken = resp.access_token;
+      storeToken(resp.access_token, resp.expires_in);
       setAuthUI(true);
       resolve(true);
     };
@@ -139,10 +232,7 @@ function ensureAuth(){
 /* ---------------- Sheets API ---------------- */
 async function sheetsFetch(path, options={}){
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${settings.sheetId}${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json', ...(options.headers||{}) }
-  });
+  const res = await authedFetch(url, options);
   if(!res.ok){
     const body = await res.text();
     throw new Error(`Sheets API ${res.status}: ${body.slice(0,200)}`);
@@ -206,10 +296,7 @@ function upsertItemToSheet(item){
 
 /* ---------------- Google Drive ---------------- */
 async function driveFetch(path, options={}){
-  const res = await fetch(`https://www.googleapis.com/drive/v3${path}`, {
-    ...options,
-    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json', ...(options.headers||{}) }
-  });
+  const res = await authedFetch(`https://www.googleapis.com/drive/v3${path}`, options);
   if(!res.ok){
     const body = await res.text();
     throw new Error(`Drive API ${res.status}: ${body.slice(0,200)}`);
@@ -246,11 +333,11 @@ async function uploadPhotoToDrive(file, name, folderId){
     file,
     `\r\n--${boundary}--`
   ]);
-  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
-    method:'POST',
-    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
-    body
-  });
+  const res = await authedFetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+    { method:'POST', body },
+    `multipart/related; boundary=${boundary}`
+  );
   if(!res.ok){
     const body2 = await res.text();
     throw new Error(`Drive upload ${res.status}: ${body2.slice(0,200)}`);
@@ -334,9 +421,7 @@ async function listRecentDrivePhotos(){
   return data.files || [];
 }
 async function downloadDriveFile(id, name){
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
-  });
+  const res = await authedFetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {}, null);
   if(!res.ok) throw new Error(`Drive download ${res.status}`);
   const blob = await res.blob();
   return new File([blob], name, { type: blob.type || 'image/jpeg' });
@@ -682,9 +767,9 @@ async function exportInventoryZip(){
       const matches = driveFiles.filter(f => f.name.startsWith(`${item.itemCode}_`));
       for(const f of matches){
         try{
-          const res = await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`, {
-            headers: { 'Authorization': `Bearer ${accessToken}` }
-          });
+          // A big export can outlive the token — authedFetch renews it mid-run
+          // rather than quietly dropping the rest of the photos.
+          const res = await authedFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`, {}, null);
           if(res.ok){ folder.file(f.name, await res.blob()); photoCount++; }
         } catch(e){ console.error('export photo failed', f.name, e); }
       }
@@ -823,7 +908,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if(!accessToken) return;
     if(!confirm('Sign out of Google? Anything not yet synced stays saved on this device.')) return;
     google.accounts.oauth2.revoke(accessToken, () => {});
-    accessToken = null;
+    clearStoredToken();
     setAuthUI(false);
     toast('Signed out');
   });
@@ -834,7 +919,7 @@ document.addEventListener('DOMContentLoaded', () => {
     settings.clientId = document.getElementById('sClientId').value.trim();
     settings.sheetId  = document.getElementById('sSheetId').value.trim();
     saveSettings();
-    accessToken = null;
+    clearStoredToken(); // a token issued for the old client ID is no use here
     setAuthUI(false);
     initGoogleAuth();
     document.getElementById('settingsStatus').textContent = 'Saved. Sign in to sync.';
@@ -1143,9 +1228,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // kick off
   window.addEventListener('load', () => {
-    setTimeout(() => { initGoogleAuth(); maybePromptSignIn(); }, 300); // give the GIS script a moment to attach
+    setTimeout(() => { initGoogleAuth(); resumeSession(); }, 300); // give the GIS script a moment to attach
   });
 });
+
+// Pick up where the last load left off. A still-valid stored token means no
+// sign-in at all — which is the whole point, since coming back from the camera
+// counts as a fresh load on most phones.
+function resumeSession(){
+  const stored = loadStoredToken();
+  if(stored){
+    accessToken = stored.token;
+    setAuthUI(true);
+    flushQueue().then(flushWishQueue).then(refreshInventory);
+    return;
+  }
+  maybePromptSignIn();
+}
 
 function maybePromptSignIn(){
   if(accessToken || !settings.clientId) return;
@@ -1258,9 +1357,7 @@ function openLightbox(item){
   document.getElementById('lightboxBackdrop').hidden = false;
 
   if(accessToken && entry && entry.id){
-    fetch(`https://www.googleapis.com/drive/v3/files/${entry.id}?alt=media`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    })
+    authedFetch(`https://www.googleapis.com/drive/v3/files/${entry.id}?alt=media`, {}, null)
       .then(res => res.ok ? res.blob() : null)
       .then(blob => {
         if(blob && !document.getElementById('lightboxBackdrop').hidden){

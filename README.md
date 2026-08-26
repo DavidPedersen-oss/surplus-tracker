@@ -219,6 +219,14 @@ an automatic decision — nothing gets reserved without you clicking.
 
 ## Notes & limits
 
+- **Staying signed in:** Google's browser sign-in issues a token that lasts about an
+  hour, and the browser flow gets no refresh token, so an hour of use is the most
+  any single sign-in can buy you. The app now keeps that token in the device's
+  local storage and reuses it, so you sign in roughly once an hour rather than on
+  every page load — which matters because mobile browsers reload the page when you
+  come back from the camera, making a routine "photo, photo, save" ask you to sign
+  in again. If a token expires mid-action the app quietly renews it and retries
+  instead of reporting a mystery sync failure. Signing out clears the stored token.
 - Only signed-in, test-user-approved Google accounts (with Editor access to the sheet)
   can read/write your data — the deployed site has no embedded secrets except the
   vision proxy's exposure noted in step 5.
