@@ -1384,13 +1384,13 @@ function openLightbox(item){
   img.alt = item.description || item.itemCode;
   document.getElementById('lightboxCode').textContent = item.itemCode;
   document.getElementById('lightboxTitle').textContent = item.description || 'Untitled item';
-  document.getElementById('lightboxDescription').textContent = [
+  document.getElementById('lightboxDescription').textContent = item.notes || 'No additional description provided.';
+  document.getElementById('lightboxCaption').textContent = [
     CATEGORY_LABELS[item.category] || item.category,
     item.dimensions,
     `Qty: ${item.qty || 1}`,
     item.condition
   ].filter(Boolean).join(' · ');
-  document.getElementById('lightboxCaption').textContent = item.notes ? `Notes: ${item.notes}` : '';
   document.getElementById('lightboxBackdrop').hidden = false;
 
   if(accessToken && entry && entry.id){
