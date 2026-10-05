@@ -1141,7 +1141,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if(action === 'reserve') openReserveModal(item);
       if(action === 'claim')   setStatus(item, 'Claimed');
       if(action === 'remove')  setStatus(item, 'Removed');
-      if(action === 'preview') openLightboxForCard(card);
+      if(action === 'preview') {
+        openLightboxForCard(btn.closest('.tag-card'));
+        return;
+      }
       if(action === 'release') { item.status='Available'; item.reservedBy=''; item.reservedContact=''; item.reservedDate=''; persistItem(item); }
       if(action === 'email')   openEmailModal(item);
       if(action === 'sharepoint') openSharePointModal(item);
