@@ -136,7 +136,8 @@ function ageClass(days){
 
 /* ---------------- Google auth ---------------- */
 function initGoogleAuth(){
-  if(!settings.clientId || typeof google === 'undefined') return;
+  if(tokenClient) return true;
+  if(!settings.clientId || typeof google === 'undefined') return false;
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: settings.clientId,
     scope: SCOPE,
@@ -155,6 +156,7 @@ function initGoogleAuth(){
       console.error('sign-in error', err);
     }
   });
+  return true;
 }
 let pendingSilentFail = null;
 
@@ -183,7 +185,7 @@ function requestTokenSilently(){
     // A blocked popup means it couldn't stay silent — give up now, don't stall.
     pendingSilentFail = () => finish(false);
     setTimeout(() => finish(false), 8000);
-    try { tokenClient.requestAccessToken({ prompt: '' }); }
+    try { tokenClient.requestAccessToken({ prompt: 'none' }); }
     catch(e){ console.error('silent token refresh failed', e); finish(false); }
   });
 }
@@ -216,6 +218,7 @@ function setAuthUI(signedIn){
 function ensureAuth(){
   return new Promise((resolve) => {
     if(accessToken){ resolve(true); return; }
+    if(!tokenClient) initGoogleAuth();
     if(!tokenClient){ toast('Add your Google Client ID in Settings first'); resolve(false); return; }
     const orig = tokenClient.callback;
     tokenClient.callback = (resp) => {
@@ -1226,16 +1229,26 @@ document.addEventListener('DOMContentLoaded', () => {
     if(ok){ await flushQueue(); await flushWishQueue(); await refreshInventory(); }
   });
 
-  // kick off
+  // kick off: wait for GIS, then try a genuinely silent session restore.
+  // If Google cannot restore it without UI, leave the user signed out and let
+  // the explicit Sign in button start the visible OAuth flow.
   window.addEventListener('load', () => {
-    setTimeout(() => { initGoogleAuth(); resumeSession(); }, 300); // give the GIS script a moment to attach
+    setTimeout(bootAuth, 300); // give the GIS script a moment to attach
   });
 });
+
+async function bootAuth(){
+  const started = Date.now();
+  while(!initGoogleAuth() && Date.now() - started < 5000){
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  await resumeSession();
+}
 
 // Pick up where the last load left off. A still-valid stored token means no
 // sign-in at all — which is the whole point, since coming back from the camera
 // counts as a fresh load on most phones.
-function resumeSession(){
+async function resumeSession(){
   const stored = loadStoredToken();
   if(stored){
     accessToken = stored.token;
@@ -1243,7 +1256,9 @@ function resumeSession(){
     flushQueue().then(flushWishQueue).then(refreshInventory);
     return;
   }
-  maybePromptSignIn();
+  if(await requestTokenSilently()){
+    flushQueue().then(flushWishQueue).then(refreshInventory);
+  }
 }
 
 function maybePromptSignIn(){
