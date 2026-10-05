@@ -223,6 +223,9 @@ main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}
 .tag-card.is-flipped .tag-card-inner{
   transform:rotateY(180deg);
 }
+/* Keep the deliberate tap/click flip available even when hover motion is off. */
+body.no-card-hover .tag-card:hover .tag-card-inner{transform:none;}
+body.no-card-hover .tag-card.is-flipped .tag-card-inner{transform:rotateY(180deg);}
 .tag-card-face{
   backface-visibility:hidden;-webkit-backface-visibility:hidden;
   background:var(--paper-raised);border:1px solid var(--line);border-radius:10px;
@@ -345,6 +348,10 @@ main{max-width:520px;margin:0 auto;padding:18px 16px 24px;}
   font-size:13px;font-weight:600;color:var(--ink-soft);
 }
 .wish-check input{width:17px;height:17px;accent-color:var(--gold);}
+.setting-toggle{align-items:flex-start;gap:10px;}
+.setting-toggle span{display:flex;flex-direction:column;gap:3px;line-height:1.35;}
+.setting-toggle strong{font-size:13px;font-weight:600;}
+.setting-toggle small{font-size:12px;color:var(--ink-soft);font-weight:500;}
 
 /* who's waiting, shown on a freshly logged item */
 .wish-alert{

@@ -46,6 +46,12 @@ function loadSettings(){
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
 }
 function saveSettings(){ localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
+function applyCardHoverPreference(){
+  const enabled = settings.flipCardsOnHover !== false;
+  document.body.classList.toggle('no-card-hover', !enabled);
+  const toggle = document.getElementById('sFlipCardsOnHover');
+  if(toggle) toggle.checked = enabled;
+}
 function loadCache(){
   try { return JSON.parse(localStorage.getItem(CACHE_KEY)) || []; } catch { return []; }
 }
@@ -886,6 +892,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // settings form prefill
   document.getElementById('sClientId').value = settings.clientId || '';
   document.getElementById('sSheetId').value = settings.sheetId || '';
+  applyCardHoverPreference();
   if(settings.clientId && settings.sheetId){
     document.getElementById('settingsStatus').textContent = 'Settings saved.';
   }
@@ -921,7 +928,9 @@ document.addEventListener('DOMContentLoaded', () => {
     e.preventDefault();
     settings.clientId = document.getElementById('sClientId').value.trim();
     settings.sheetId  = document.getElementById('sSheetId').value.trim();
+    settings.flipCardsOnHover = document.getElementById('sFlipCardsOnHover').checked;
     saveSettings();
+    applyCardHoverPreference();
     clearStoredToken(); // a token issued for the old client ID is no use here
     setAuthUI(false);
     initGoogleAuth();
