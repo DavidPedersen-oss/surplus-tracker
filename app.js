@@ -840,7 +840,10 @@ function tagCardHTML(item){
   <div class="tag-card" data-code="${item.itemCode}">
     <div class="tag-card-inner">
       <div class="tag-card-front tag-card-face">
-        <div class="tag-card-code-label">${item.itemCode}</div>
+        <div class="tag-card-code-row">
+          <div class="tag-card-code-label">${item.itemCode}</div>
+          <button data-action="preview" data-code="${item.itemCode}" class="preview-action">Preview</button>
+        </div>
         <div class="tag-card-photo-trigger">${thumbHTML}</div>
       </div>
       <div class="tag-card-back tag-card-face">
@@ -1138,6 +1141,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if(action === 'reserve') openReserveModal(item);
       if(action === 'claim')   setStatus(item, 'Claimed');
       if(action === 'remove')  setStatus(item, 'Removed');
+      if(action === 'preview') openLightboxForCard(card);
       if(action === 'release') { item.status='Available'; item.reservedBy=''; item.reservedContact=''; item.reservedDate=''; persistItem(item); }
       if(action === 'email')   openEmailModal(item);
       if(action === 'sharepoint') openSharePointModal(item);
@@ -1377,7 +1381,16 @@ function openLightbox(item){
   const entry = driveThumbs[item.itemCode];
   const img = document.getElementById('lightboxImg');
   img.src = entry ? entry.url : '';
-  document.getElementById('lightboxCaption').textContent = buildLineCaption(item);
+  img.alt = item.description || item.itemCode;
+  document.getElementById('lightboxCode').textContent = item.itemCode;
+  document.getElementById('lightboxTitle').textContent = item.description || 'Untitled item';
+  document.getElementById('lightboxDescription').textContent = [
+    CATEGORY_LABELS[item.category] || item.category,
+    item.dimensions,
+    `Qty: ${item.qty || 1}`,
+    item.condition
+  ].filter(Boolean).join(' · ');
+  document.getElementById('lightboxCaption').textContent = item.notes ? `Notes: ${item.notes}` : '';
   document.getElementById('lightboxBackdrop').hidden = false;
 
   if(accessToken && entry && entry.id){

@@ -156,7 +156,7 @@
   <section class="tab-panel" id="panel-inventory" data-panel="inventory">
     <div class="panel-head">
       <h2>Inventory</h2>
-      <p class="panel-hint">Everything you've logged, newest first. Hover or tap a card to flip it; double-click (or press and hold on mobile) its photo to view it fullscreen.</p>
+      <p class="panel-hint">Everything you've logged, newest first. Use Preview on any card to see its photo full screen; tapping or pressing and holding the photo still works too.</p>
     </div>
 
     <div class="filter-row">
@@ -499,7 +499,12 @@
   <button type="button" class="lightbox-close" id="lightboxClose" aria-label="Close">×</button>
   <div class="lightbox-stage">
     <img id="lightboxImg" class="lightbox-img" src="" alt="">
-    <p class="lightbox-caption" id="lightboxCaption"></p>
+    <div class="lightbox-details">
+      <div id="lightboxCode" class="lightbox-code"></div>
+      <h2 id="lightboxTitle" class="lightbox-title"></h2>
+      <p id="lightboxDescription" class="lightbox-description"></p>
+      <p class="lightbox-caption" id="lightboxCaption"></p>
+    </div>
   </div>
 </div>
 
